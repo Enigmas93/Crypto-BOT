@@ -2824,6 +2824,43 @@ Dashboard) já rodando havia horas em produção real de testnet:
       (`git check-ignore` testado). Recomendado ao usuário fazer o
       primeiro commit - risco real de perda de trabalho enquanto isso não
       acontece, não é uma questão de estilo.
+20. **NotificationService implementado (Telegram) - a lacuna de alertas
+    identificada na auditoria, fechada.** Escopo deliberadamente restrito
+    ao que precisa de humano AGORA, não a todo evento do sistema:
+    - **Kill Switch disparado/resetado** - `aegis/notifications/
+      telegram.py` (`TelegramNotifier`, best-effort, nunca lança exceção -
+      uma falha de envio não pode derrubar a lógica de trading real que
+      estava tentando avisar algo) injetado como colaborador opcional em
+      `KillSwitchRepository` (`notifier=None` por padrão - dashboard,
+      testes e demos nunca precisam saber que isso existe). Dispara
+      exatamente uma vez por transição real (o próprio código já garante
+      "sticky, não repete TRIGGERED" - reaproveitado, não duplicado).
+    - **MANUAL_INTERVENTION_REQUIRED** (bracket + flatten de emergência
+      falharam os dois - uma posição real pode estar sem proteção) -
+      Shadow e Momentum alertam direto no ponto onde já logavam isso em
+      nível CRÍTICO. Paper não tem esse alerta (nunca coloca ordem real).
+    - **Supervisor: crash-loop de qualquer processo** - alerta uma vez
+      quando uma nova sequência de falhas começa (não a cada tentativa de
+      restart, o que viraria spam a cada `_MAX_BACKOFF_SECONDS` pra sempre
+      numa falha persistente).
+    - 12 testes novos (cliente Telegram isolado com mock transport,
+      wiring do Kill Switch com fake notifier confirmando disparo único +
+      reset + comportamento seguro sem notifier configurado, crash-loop
+      do supervisor). 574/574 testes passando.
+    - **Validado ao vivo, ponta a ponta, contra a API real do Telegram**:
+      antes de escrever qualquer código, mandei uma mensagem de teste
+      direto via curl com o token e chat id reais do usuário - confirmado
+      entregue (canal "SNIPER EDGE QUANT"). Depois de implementado e
+      redeployado (supervisor inteiro reiniciado, os 11 processos
+      confirmados de volta, as 5 posições reais do Shadow reconciliadas
+      sem perda), disparei um Kill Switch real numa conta de teste
+      descartável (nunca nas contas reais - `check_and_maybe_trigger` +
+      `reset` chamados diretamente contra o Postgres real e o Telegram
+      real) e confirmei as duas mensagens (disparo + reset) chegando de
+      verdade no canal do usuário - não só nos testes offline. Resíduo da
+      conta de teste limpo do banco logo em seguida.
+    - Chaves reais gravadas em `backend/.env` (`TELEGRAM_BOT_TOKEN`,
+      `TELEGRAM_CHAT_ID`), mesmo tratamento de toda outra credencial.
 
 ## Métricas da Fase 11
 

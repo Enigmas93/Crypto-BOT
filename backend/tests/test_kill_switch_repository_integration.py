@@ -122,3 +122,58 @@ async def test_after_reset_a_new_breach_can_trigger_again(pool):
 
     events = await repo.fetch_events(account_id)
     assert [e["action"] for e in events] == ["TRIGGERED", "RESET", "TRIGGERED"]
+
+
+class _FakeNotifier:
+    def __init__(self):
+        self.sent: list[str] = []
+
+    async def send(self, message: str) -> None:
+        self.sent.append(message)
+
+
+@pytest.mark.asyncio
+async def test_notifier_fires_once_on_trigger_and_not_again_while_sticky(pool):
+    notifier = _FakeNotifier()
+    repo = KillSwitchRepository(pool, notifier=notifier)
+    account_id = _account_id()
+
+    await repo.check_and_maybe_trigger(
+        account_id, equity=880.0, peak_equity=1000.0, consecutive_losses=0, settings=_Settings(),
+    )
+    assert len(notifier.sent) == 1
+    assert "KILL SWITCH" in notifier.sent[0]
+    assert account_id in notifier.sent[0]
+    assert "MAX_DRAWDOWN_BREACHED" in notifier.sent[0]
+
+    # Sticky - a second check while already triggered must not send a second alert.
+    await repo.check_and_maybe_trigger(
+        account_id, equity=999.0, peak_equity=1000.0, consecutive_losses=0, settings=_Settings(),
+    )
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_notifier_fires_on_reset(pool):
+    notifier = _FakeNotifier()
+    repo = KillSwitchRepository(pool, notifier=notifier)
+    account_id = _account_id()
+    await repo.check_and_maybe_trigger(
+        account_id, equity=880.0, peak_equity=1000.0, consecutive_losses=0, settings=_Settings(),
+    )
+    notifier.sent.clear()
+
+    await repo.reset(account_id, note="false alarm")
+    assert len(notifier.sent) == 1
+    assert "resetado" in notifier.sent[0]
+    assert "false alarm" in notifier.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_no_notifier_configured_is_a_safe_default(pool):
+    repo = KillSwitchRepository(pool)  # no notifier passed - must not raise
+    account_id = _account_id()
+    state = await repo.check_and_maybe_trigger(
+        account_id, equity=880.0, peak_equity=1000.0, consecutive_losses=0, settings=_Settings(),
+    )
+    assert state.is_triggered is True

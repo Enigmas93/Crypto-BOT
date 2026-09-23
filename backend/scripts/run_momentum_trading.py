@@ -43,6 +43,7 @@ from aegis.execution.binance_provider import BinanceExecutionProvider  # noqa: E
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.momentum.engine import MomentumTradingEngine  # noqa: E402
 from aegis.momentum.models import MomentumConfig  # noqa: E402
+from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceRestError  # noqa: E402
 
 _LOG = get_logger("scripts.run_momentum_trading")
@@ -71,7 +72,8 @@ async def _main() -> None:
     pool = await create_pool(settings)
     momentum_repo = MomentumRepository(pool)
     risk_repo = RiskRepository(pool)
-    kill_switch_repo = KillSwitchRepository(pool)
+    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     execution = BinanceExecutionProvider(rest)
     engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings)
 
@@ -158,11 +160,16 @@ async def _main() -> None:
                         pass
                     elif action == "BRACKET_FAILED" and not result.get("flattened", True):
                         log_event(_LOG, "MANUAL_INTERVENTION_REQUIRED", level=50, symbol=symbol, **result)
+                        await notifier.send(
+                            f"\U0001f6a8 MOMENTUM TRADING - INTERVENÇÃO MANUAL NECESSÁRIA\n"
+                            f"Símbolo: {symbol}\nUma posição real pode estar sem proteção.\n{result.get('error', '')}"
+                        )
                     else:
                         log_event(_LOG, "cycle", symbol=symbol, action=action, **result)
 
             await asyncio.sleep(settings.momentum_poll_interval_seconds)
     finally:
+        await notifier.aclose()
         await rest.aclose()
         await close_pool(pool)
 

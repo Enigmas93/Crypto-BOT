@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import supervisor  # noqa: E402
@@ -30,3 +32,42 @@ def test_dashboard_and_every_trading_engine_are_supervised():
     # accident, that's a silent, serious regression.
     critical = {"run_shadow_trading.py", "run_momentum_trading.py", "run_paper_trading.py", "run_dashboard.py"}
     assert critical.issubset(set(supervisor._SUPERVISED_SCRIPTS))
+
+
+class _FakeProcess:
+    def __init__(self, returncode):
+        self.returncode = returncode
+
+
+class _FakeNotifier:
+    def __init__(self):
+        self.sent: list[str] = []
+
+    async def send(self, message: str) -> None:
+        self.sent.append(message)
+
+
+@pytest.mark.asyncio
+async def test_check_and_maybe_restart_alerts_once_on_a_new_failure_streak():
+    notifier = _FakeNotifier()
+    child = supervisor._Supervised("run_collector.py", notifier=notifier)
+    child.process = _FakeProcess(returncode=1)
+    child.started_at = 0.0
+
+    await child.check_and_maybe_restart(now=100.0)  # first failure of the streak
+    assert len(notifier.sent) == 1
+    assert "run_collector.py" in notifier.sent[0]
+
+    # Still the same failure (process hasn't been restarted yet, so
+    # check_and_maybe_restart is called again before next_restart_at) -
+    # must not send a second alert for the same streak.
+    await child.check_and_maybe_restart(now=101.0)
+    assert len(notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_check_and_maybe_restart_does_not_alert_without_a_notifier():
+    child = supervisor._Supervised("run_collector.py")  # no notifier - must not raise
+    child.process = _FakeProcess(returncode=1)
+    child.started_at = 0.0
+    await child.check_and_maybe_restart(now=100.0)

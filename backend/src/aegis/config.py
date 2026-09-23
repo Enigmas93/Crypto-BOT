@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     # not "1000pepe").
     event_risk_coin_slugs: str = "bitcoin,ethereum,solana,ripple,dogecoin,pepe,near-protocol"
 
+    # Notifications / Telegram (Fase 15b) ----------------------------------------
+    # Optional - engines run identically without it, just silently skip
+    # sending. Alerts only on things that need a human: Kill Switch
+    # triggers and MANUAL_INTERVENTION_REQUIRED (a real position left
+    # unprotected after a bracket + emergency-flatten both failed).
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     # Logging ---------------------------------------------------------------
     log_level: str = "INFO"
 

@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aegis.config import get_settings  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
+from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.utils.backoff import BackoffPolicy  # noqa: E402
 
 _LOG = get_logger("scripts.supervisor")
@@ -77,7 +78,7 @@ _BACKOFF_RESET_AFTER_SECONDS = 600.0
 
 
 class _Supervised:
-    def __init__(self, script: str) -> None:
+    def __init__(self, script: str, notifier: TelegramNotifier | None = None) -> None:
         self.script = script
         self.process: asyncio.subprocess.Process | None = None
         self.started_at: float = 0.0
@@ -85,6 +86,7 @@ class _Supervised:
         # Same policy every reconnecting client in this codebase already
         # uses (aegis.utils.backoff) - 1s base, 60s cap, 2x multiplier.
         self.backoff = BackoffPolicy()
+        self.notifier = notifier
 
     async def start(self) -> None:
         self.process = await asyncio.create_subprocess_exec(_PYTHON, str(_SCRIPTS_DIR / self.script))
@@ -109,20 +111,32 @@ class _Supervised:
             uptime = now - self.started_at
             if uptime >= _BACKOFF_RESET_AFTER_SECONDS:
                 self.backoff.reset()
+            # Checked before next_delay() advances it - True only for the
+            # FIRST failure of a new streak, so a crash-loop alerts once
+            # when it starts, not on every retry (which would just spam a
+            # channel once every _MAX_BACKOFF_SECONDS forever).
+            is_new_failure_streak = self.backoff.attempt == 0
             delay = self.backoff.next_delay()
             self.next_restart_at = now + delay
             log_event(
                 _LOG, "child_exited", level=40, script=self.script, exit_code=self.process.returncode,
                 uptime_seconds=round(uptime, 1), restart_in_seconds=round(delay, 1),
             )
+            if is_new_failure_streak and self.notifier is not None:
+                await self.notifier.send(
+                    f"⚠️ Supervisor: '{self.script}' caiu (exit code {self.process.returncode}) "
+                    f"depois de {round(uptime, 1)}s no ar. Reiniciando automaticamente."
+                )
             return
         if now >= self.next_restart_at:
             await self.start()
 
 
 async def _run_supervisor() -> None:
-    configure_logging(get_settings().log_level)
-    children = [_Supervised(script) for script in _SUPERVISED_SCRIPTS]
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+    children = [_Supervised(script, notifier=notifier) for script in _SUPERVISED_SCRIPTS]
     for child in children:
         await child.start()
     log_event(_LOG, "supervisor_started", scripts=_SUPERVISED_SCRIPTS)
@@ -136,6 +150,7 @@ async def _run_supervisor() -> None:
     finally:
         log_event(_LOG, "supervisor_stopping")
         await asyncio.gather(*(child.stop() for child in children))
+        await notifier.aclose()
 
 
 if __name__ == "__main__":

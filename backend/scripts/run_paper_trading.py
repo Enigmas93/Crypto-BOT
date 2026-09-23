@@ -43,6 +43,7 @@ from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
 from aegis.db.paper_repository import PaperRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
+from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.paper.engine import PaperTradingEngine  # noqa: E402
 from aegis.paper.models import PaperTradingConfig  # noqa: E402
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient  # noqa: E402
@@ -61,7 +62,8 @@ async def _main() -> None:
     candle_repo = CandleRepository(pool)
     paper_repo = PaperRepository(pool)
     risk_repo = RiskRepository(pool)
-    kill_switch_repo = KillSwitchRepository(pool)
+    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     engine = PaperTradingEngine(candle_repo, paper_repo, risk_repo, kill_switch_repo, settings)
 
     try:
@@ -105,6 +107,7 @@ async def _main() -> None:
                     log_event(_LOG, "cycle", symbol=config.symbol, action=action, **result)
             await asyncio.sleep(settings.paper_trading_poll_interval_seconds)
     finally:
+        await notifier.aclose()
         await rest.aclose()
         await close_pool(pool)
 

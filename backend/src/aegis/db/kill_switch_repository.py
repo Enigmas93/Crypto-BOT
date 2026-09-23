@@ -27,8 +27,14 @@ class KillSwitchState:
 
 
 class KillSwitchRepository:
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: asyncpg.Pool, notifier=None) -> None:
         self._pool = pool
+        # Optional TelegramNotifier (aegis.notifications.telegram) - a
+        # trigger/reset here is exactly the kind of thing a human needs to
+        # know about without having to be watching the dashboard. None is
+        # the default everywhere except the real trading scripts, so
+        # dashboard/tests/demos never need to know this exists.
+        self._notifier = notifier
 
     @staticmethod
     def _to_state(row: asyncpg.Record) -> KillSwitchState:
@@ -76,6 +82,10 @@ class KillSwitchRepository:
                     "INSERT INTO kill_switch_events (account_id, action, reasons) VALUES ($1, 'TRIGGERED', $2)",
                     account_id, reasons,
                 )
+        if self._notifier is not None:
+            await self._notifier.send(
+                f"\U0001f6d1 KILL SWITCH DISPARADO - conta '{account_id}'\nMotivo(s): {', '.join(reasons)}"
+            )
         return self._to_state(row)
 
     async def reset(self, account_id: str, note: str) -> KillSwitchState:
@@ -98,6 +108,8 @@ class KillSwitchRepository:
                     "INSERT INTO kill_switch_events (account_id, action, note) VALUES ($1, 'RESET', $2)",
                     account_id, note,
                 )
+        if self._notifier is not None:
+            await self._notifier.send(f"✅ Kill Switch resetado - conta '{account_id}'\nNota: {note}")
         return self._to_state(row)
 
     async def fetch_events(self, account_id: str, limit: int = 20) -> list[dict]:

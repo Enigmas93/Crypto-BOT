@@ -48,6 +48,7 @@ from aegis.db.risk_repository import RiskRepository  # noqa: E402
 from aegis.db.shadow_repository import ShadowRepository  # noqa: E402
 from aegis.execution.binance_provider import BinanceExecutionProvider  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
+from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceRestError  # noqa: E402
 from aegis.shadow.engine import ShadowTradingEngine  # noqa: E402
 from aegis.shadow.models import ShadowTradingConfig  # noqa: E402
@@ -80,7 +81,8 @@ async def _main() -> None:
     candle_repo = CandleRepository(pool)
     shadow_repo = ShadowRepository(pool)
     risk_repo = RiskRepository(pool)
-    kill_switch_repo = KillSwitchRepository(pool)
+    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     execution = BinanceExecutionProvider(rest)
     engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, execution, settings)
 
@@ -132,10 +134,15 @@ async def _main() -> None:
                     pass  # expected every cycle between candle closes
                 elif action == "BRACKET_FAILED" and not result.get("flattened", True):
                     log_event(_LOG, "MANUAL_INTERVENTION_REQUIRED", level=50, symbol=config.symbol, **result)
+                    await notifier.send(
+                        f"\U0001f6a8 SHADOW TRADING - INTERVENÇÃO MANUAL NECESSÁRIA\n"
+                        f"Símbolo: {config.symbol}\nUma posição real pode estar sem proteção.\n{result.get('error', '')}"
+                    )
                 else:
                     log_event(_LOG, "cycle", symbol=config.symbol, action=action, **result)
             await asyncio.sleep(settings.paper_trading_poll_interval_seconds)
     finally:
+        await notifier.aclose()
         await rest.aclose()
         await close_pool(pool)
 
