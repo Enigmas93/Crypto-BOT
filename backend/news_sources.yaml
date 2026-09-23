@@ -1,0 +1,72 @@
+# News sources tracked by the News Engine (spec section 38).
+# Every feed_url was fetched and confirmed live (HTTP 200, valid RSS/Atom,
+# recent real items) before being added here - never assumed to exist.
+#
+# source_quality is one of the five tiers spec section 40 defines exactly:
+#   PRIMARY_OFFICIAL         - a regulator/central bank/exchange's own feed
+#   TIER_1_FINANCIAL_MEDIA   - Reuters/Bloomberg-tier financial press
+#   SPECIALIZED_CRYPTO_MEDIA - crypto-focused outlets (CoinDesk, The Block, ...)
+#   SOCIAL_MEDIA             - X/Twitter, Reddit, Telegram, ...
+#   UNVERIFIED                - anything not otherwise classified
+# The engine maps each tier to its numeric score (1.00/0.90/0.75/0.30/0.00).
+#
+# Phase 6b added TIER_1_FINANCIAL_MEDIA and SPECIALIZED_CRYPTO_MEDIA feeds,
+# each curl-checked live (HTTP 200 + real, current items) before being added.
+# One candidate (feeds.reuters.com - the old public Reuters RSS domain) was
+# tried and dropped: it no longer resolves, confirming it was right not to
+# assume it still existed.
+
+sources:
+  - source_id: fed_press_releases
+    name: "Federal Reserve - Press Releases"
+    feed_url: "https://www.federalreserve.gov/feeds/press_all.xml"
+    format: rss
+    source_quality: PRIMARY_OFFICIAL
+
+  - source_id: sec_press_releases
+    name: "SEC - Press Releases"
+    feed_url: "https://www.sec.gov/news/pressreleases.rss"
+    format: rss
+    source_quality: PRIMARY_OFFICIAL
+
+  - source_id: cftc_press_releases
+    name: "CFTC - Press Releases"
+    feed_url: "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"
+    format: rss
+    source_quality: PRIMARY_OFFICIAL
+
+  - source_id: marketwatch_top_stories
+    name: "MarketWatch - Top Stories"
+    feed_url: "https://www.marketwatch.com/rss/topstories"
+    format: rss
+    source_quality: TIER_1_FINANCIAL_MEDIA
+
+  - source_id: cnbc_top_news
+    name: "CNBC - Top News"
+    feed_url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    format: rss
+    source_quality: TIER_1_FINANCIAL_MEDIA
+
+  - source_id: coindesk
+    name: "CoinDesk"
+    feed_url: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+    format: rss
+    source_quality: SPECIALIZED_CRYPTO_MEDIA
+
+  - source_id: cointelegraph
+    name: "Cointelegraph"
+    feed_url: "https://cointelegraph.com/rss"
+    format: rss
+    source_quality: SPECIALIZED_CRYPTO_MEDIA
+
+  - source_id: decrypt
+    name: "Decrypt"
+    feed_url: "https://decrypt.co/feed"
+    format: rss
+    source_quality: SPECIALIZED_CRYPTO_MEDIA
+
+  - source_id: the_block
+    name: "The Block"
+    feed_url: "https://www.theblock.co/rss.xml"
+    format: rss
+    source_quality: SPECIALIZED_CRYPTO_MEDIA

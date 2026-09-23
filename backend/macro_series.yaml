@@ -1,0 +1,100 @@
+# Macro series tracked by the Macro Engine (spec section 33).
+# Every entry is a real, verified series - never assume one exists without
+# checking the source first: fred.stlouisfed.org/series/<series_id> for
+# FRED, data.bls.gov/series for BLS, apps.bea.gov/iTable for BEA.
+#
+# transformation is informational only (how analysts conventionally read
+# this series) - the engine always computes change_pct/yoy_pct_change/
+# zscore_vs_trailing for every series regardless of this field.
+
+series:
+  - series_id: FEDFUNDS
+    name: "Federal Funds Effective Rate"
+    description: "Effective interest rate for interbank overnight lending in the US"
+    frequency: monthly
+    source: fred
+    importance: high
+    transformation: level
+
+  - series_id: DGS2
+    name: "2-Year Treasury Constant Maturity Rate"
+    description: "Yield on 2-year US Treasury securities, constant maturity basis"
+    frequency: daily
+    source: fred
+    importance: high
+    transformation: level
+
+  - series_id: DGS10
+    name: "10-Year Treasury Constant Maturity Rate"
+    description: "Yield on 10-year US Treasury securities, constant maturity basis"
+    frequency: daily
+    source: fred
+    importance: high
+    transformation: level
+
+  - series_id: CPIAUCSL
+    name: "Consumer Price Index for All Urban Consumers"
+    description: "Headline US CPI, not seasonally adjusted transformation applied here"
+    frequency: monthly
+    source: fred
+    importance: high
+    transformation: yoy_pct_change
+
+  - series_id: UNRATE
+    name: "Civilian Unemployment Rate"
+    description: "US unemployment rate, seasonally adjusted"
+    frequency: monthly
+    source: fred
+    importance: high
+    transformation: level
+
+  - series_id: NFCI
+    name: "Chicago Fed National Financial Conditions Index"
+    description: "Composite index of US financial conditions - above 0 is tighter than average"
+    frequency: weekly
+    source: fred
+    importance: medium
+    transformation: level
+
+  # BLS (spec section 34) - a second, independent primary source for the
+  # same kind of series FRED mirrors, plus payrolls (NFP), which FRED does
+  # not publish as its own series.
+  - series_id: LNS14000000
+    name: "Unemployment Rate (BLS)"
+    description: "Civilian unemployment rate, seasonally adjusted - primary source, not FRED's mirror"
+    frequency: monthly
+    source: bls
+    importance: high
+    transformation: level
+
+  - series_id: CES0000000001
+    name: "Total Nonfarm Payroll Employment (NFP)"
+    description: "All employees, total nonfarm, seasonally adjusted - the number markets call 'NFP'"
+    frequency: monthly
+    source: bls
+    importance: high
+    transformation: change_pct
+
+  - series_id: CUSR0000SA0
+    name: "CPI-U, All Items, Seasonally Adjusted (BLS)"
+    description: "Headline CPI-U, seasonally adjusted - primary source, not FRED's mirror"
+    frequency: monthly
+    source: bls
+    importance: high
+    transformation: yoy_pct_change
+
+  # BEA (spec section 35) - GDP, the one series here confirmed against
+  # BEA's own NIPA table browser (apps.bea.gov/iTable) before writing code.
+  # BEA has no flat series_id like FRED/BLS - a value is only addressable
+  # as (dataset, table, series_id-within-that-table), hence the extra
+  # dataset/table/bea_frequency fields below (unused by fred/bls entries).
+  - series_id: A191RL
+    name: "Real GDP, % Change (BEA)"
+    description: "Real Gross Domestic Product, percent change from preceding period, SAAR"
+    frequency: quarterly
+    source: bea
+    importance: high
+    transformation: level
+    dataset: NIPA
+    table: T10101
+    bea_frequency: Q

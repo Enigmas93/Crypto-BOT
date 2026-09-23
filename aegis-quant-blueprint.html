@@ -1,0 +1,843 @@
+<title>Aegis Quant</title>
+<style>
+:root{
+  --bg:#F4F6F7; --surface:#FFFFFF; --surface-2:#ECEEF0; --surface-3:#E2E6E9;
+  --border:#D8DDE1; --text:#1B2430; --text-dim:#5B6774; --text-faint:#8B96A3;
+  --accent:#A0631A; --accent-ink:#7A4C13; --accent-soft:#F2E4CE;
+  --structural:#1F3A44; --structural-soft:#DCE7E9;
+  --long:#1F8A5A; --long-soft:#DFF1E7; --short:#C1443C; --short-soft:#FBE4E2;
+  --warn:#B8860F; --warn-soft:#F7ECCB; --crit:#C1443C; --ok:#1F8A5A;
+  --mono-bg:#101820; --mono-line:#28323C; --mono-text:#D8E2E8;
+  --radius:10px; --radius-sm:6px;
+  --shadow: 0 1px 2px rgba(20,26,33,.06), 0 8px 24px -12px rgba(20,26,33,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10161C; --surface:#161E27; --surface-2:#1C2630; --surface-3:#232E39;
+    --border:#2A3540; --text:#E7EAEC; --text-dim:#A6B0B9; --text-faint:#6F7A85;
+    --accent:#D9A24E; --accent-ink:#F0C176; --accent-soft:#3A2E17;
+    --structural:#7FA8B3; --structural-soft:#1C2E32;
+    --long:#4CAF7D; --long-soft:#173226; --short:#E5686B; --short-soft:#3A1E1F;
+    --warn:#E0A83E; --warn-soft:#332A11; --crit:#E5686B; --ok:#4CAF7D;
+    --mono-bg:#0B1116; --mono-line:#212B33; --mono-text:#C9D6DD;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 28px -14px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10161C; --surface:#161E27; --surface-2:#1C2630; --surface-3:#232E39;
+  --border:#2A3540; --text:#E7EAEC; --text-dim:#A6B0B9; --text-faint:#6F7A85;
+  --accent:#D9A24E; --accent-ink:#F0C176; --accent-soft:#3A2E17;
+  --structural:#7FA8B3; --structural-soft:#1C2E32;
+  --long:#4CAF7D; --long-soft:#173226; --short:#E5686B; --short-soft:#3A1E1F;
+  --warn:#E0A83E; --warn-soft:#332A11; --crit:#E5686B; --ok:#4CAF7D;
+  --mono-bg:#0B1116; --mono-line:#212B33; --mono-text:#C9D6DD;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 28px -14px rgba(0,0,0,.55);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--text); margin:0;
+  font-family:"IBM Plex Sans",-apple-system,Segoe UI,sans-serif;
+  font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{font-family:"Source Serif 4",Georgia,serif; font-weight:600; text-wrap:balance; color:var(--text); margin:0}
+.serif{font-family:"Source Serif 4",Georgia,serif}
+.mono{font-family:"IBM Plex Mono",Consolas,monospace; font-variant-numeric:tabular-nums}
+a{color:inherit}
+p{margin:0}
+.wrap{max-width:1180px; margin:0 auto; padding:0 24px}
+
+/* ---- layout shell ---- */
+.shell{display:flex; min-height:100%}
+.toc{
+  width:250px; flex:none; position:sticky; top:0; align-self:flex-start;
+  height:100vh; overflow-y:auto; padding:28px 18px 40px 24px; border-right:1px solid var(--border);
+}
+.toc-brand{display:flex; align-items:center; gap:9px; margin-bottom:22px}
+.toc-mark{width:22px;height:22px;border-radius:6px;background:linear-gradient(155deg,var(--accent),var(--accent-ink));flex:none}
+.toc-brand b{font-family:"Source Serif 4",serif; font-size:17px}
+.toc-group{margin-bottom:4px}
+.toc-group-label{font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--text-faint); margin:16px 0 6px; font-weight:600}
+.toc a{
+  display:block; font-size:13px; color:var(--text-dim); text-decoration:none; padding:5px 8px;
+  border-radius:6px; margin-bottom:1px;
+}
+.toc a:hover{background:var(--surface-2); color:var(--text)}
+.main{flex:1; min-width:0}
+.hdrbar{
+  position:sticky; top:0; z-index:5; background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:12px 32px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.hdrbar .tag{font-size:11.5px; color:var(--text-faint); letter-spacing:.04em}
+.navtoggle{display:none}
+
+section{padding:64px 32px; scroll-margin-top:56px; border-bottom:1px solid var(--border)}
+section:last-of-type{border-bottom:none}
+.eyebrow{font-size:11.5px; letter-spacing:.11em; text-transform:uppercase; color:var(--accent-ink); font-weight:600; margin-bottom:10px}
+.section-title{font-size:28px; margin-bottom:10px}
+.section-lede{color:var(--text-dim); max-width:680px; font-size:15.5px; margin-bottom:32px}
+
+/* ---- hero ---- */
+.hero{padding:72px 32px 56px}
+.hero .eyebrow{color:var(--accent-ink)}
+.hero h1{font-size:46px; letter-spacing:-.01em; margin-bottom:14px}
+.hero .lede{font-size:17px; color:var(--text-dim); max-width:640px; margin-bottom:28px}
+.doctrine{
+  background:var(--structural-soft); border-left:3px solid var(--structural); border-radius:0 var(--radius) var(--radius) 0;
+  padding:18px 22px; max-width:720px; font-family:"Source Serif 4",serif; font-size:16.5px; font-style:italic;
+  color:var(--text); margin-bottom:32px;
+}
+.stat-row{display:flex; flex-wrap:wrap; gap:28px; margin-top:8px}
+.stat{min-width:120px}
+.stat b{display:block; font-family:"Source Serif 4",serif; font-size:26px; color:var(--accent-ink)}
+.stat span{font-size:12px; color:var(--text-faint)}
+
+/* ---- generic components ---- */
+.card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px}
+.grid{display:grid; gap:16px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+@media (max-width:900px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+table{border-collapse:collapse; width:100%; font-size:13.5px}
+th{text-align:left; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-faint); font-weight:600; padding:9px 12px; border-bottom:1px solid var(--border)}
+td{padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-dim); vertical-align:top}
+td.strong{color:var(--text); font-weight:600}
+.tablewrap{overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface)}
+.tablewrap table{min-width:560px}
+tr:last-child td{border-bottom:none}
+
+.pill{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:3px 9px; border-radius:99px; letter-spacing:.02em}
+.pill.long{background:var(--long-soft); color:var(--long)}
+.pill.short{background:var(--short-soft); color:var(--short)}
+.pill.wait{background:var(--surface-3); color:var(--text-faint)}
+.pill.warn{background:var(--warn-soft); color:var(--warn)}
+.pill.crit{background:var(--short-soft); color:var(--crit)}
+.pill.ok{background:var(--long-soft); color:var(--ok)}
+.pill.accent{background:var(--accent-soft); color:var(--accent-ink)}
+.dot{width:6px;height:6px;border-radius:99px;background:currentColor}
+
+.chips{display:flex; flex-wrap:wrap; gap:7px}
+.chip{font-size:12px; padding:5px 10px; border:1px solid var(--border); border-radius:99px; color:var(--text-dim); background:var(--surface)}
+
+.modcard{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px; display:flex; flex-direction:column; gap:8px}
+.modcard h4{font-size:14.5px; font-family:"IBM Plex Sans",sans-serif; font-weight:700}
+.modcard .kv{font-size:12px; color:var(--text-dim); display:flex; gap:6px}
+.modcard .kv b{color:var(--text-faint); font-weight:600; min-width:56px; flex:none; text-transform:uppercase; font-size:10px; letter-spacing:.04em; padding-top:1px}
+.modgroup-label{font-size:12px; font-weight:700; color:var(--accent-ink); text-transform:uppercase; letter-spacing:.06em; margin:34px 0 14px}
+.modgroup-label:first-child{margin-top:0}
+
+.codebox{background:var(--mono-bg); border:1px solid var(--mono-line); border-radius:var(--radius); padding:18px 20px; color:var(--mono-text); font-family:"IBM Plex Mono",monospace; font-size:12.5px; line-height:1.85; overflow-x:auto}
+.codebox .c{color:#7C8B94}
+
+.steps{display:flex; flex-wrap:wrap; align-items:center; gap:0; font-size:12.5px}
+.step{background:var(--surface); border:1px solid var(--border); padding:8px 13px; border-radius:99px; white-space:nowrap; color:var(--text-dim); font-weight:500}
+.arrow{color:var(--text-faint); padding:0 6px; font-size:13px}
+
+.layerstack{display:flex; flex-direction:column; gap:8px}
+.layer{display:grid; grid-template-columns:150px 1fr; gap:16px; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 16px}
+.layer .lname{font-weight:700; font-size:13px}
+.layer .ldesc{font-size:12.5px; color:var(--text-dim)}
+.layer .lnum{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--accent-ink); margin-right:8px}
+
+/* ---- screen mockups ---- */
+.screen{border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow); margin-top:14px}
+.screen-chrome{display:flex; align-items:center; justify-content:space-between; padding:9px 14px; background:var(--surface-2); border-bottom:1px solid var(--border)}
+.screen-chrome .dots{display:flex; gap:5px}
+.screen-chrome .dots i{width:8px;height:8px;border-radius:99px;background:var(--border)}
+.screen-chrome .path{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--text-faint)}
+.app{display:grid; grid-template-columns:168px 1fr; min-height:360px}
+@media (max-width:760px){.app{grid-template-columns:1fr}}
+.app-nav{background:var(--surface-2); border-right:1px solid var(--border); padding:14px 10px; font-size:12px}
+.app-nav .grp{color:var(--text-faint); font-size:9.5px; text-transform:uppercase; letter-spacing:.06em; margin:14px 8px 5px; font-weight:700}
+.app-nav .grp:first-child{margin-top:0}
+.app-nav a{display:block; padding:6px 8px; border-radius:6px; color:var(--text-dim); text-decoration:none; margin-bottom:1px}
+.app-nav a.on{background:var(--accent-soft); color:var(--accent-ink); font-weight:600}
+.app-main{padding:18px 20px; background:var(--surface); overflow-x:auto}
+.app-topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px}
+.app-topbar h5{font-size:15px; font-family:"Source Serif 4",serif}
+.modebar{display:flex; gap:6px; align-items:center}
+.modeopt{font-size:10.5px; padding:4px 9px; border-radius:99px; border:1px solid var(--border); color:var(--text-faint)}
+.modeopt.on{background:var(--structural); color:#fff; border-color:var(--structural)}
+.killbtn{font-size:10.5px; font-weight:700; padding:5px 11px; border-radius:6px; background:var(--short); color:#fff; letter-spacing:.03em}
+
+.tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px}
+@media (max-width:600px){.tiles{grid-template-columns:repeat(2,1fr)}}
+.tile{background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 12px}
+.tile .tl{font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em}
+.tile .tv{font-family:"IBM Plex Mono",monospace; font-size:16px; font-weight:600; margin-top:3px}
+.tile .tv.up{color:var(--long)} .tile .tv.down{color:var(--short)}
+
+.mini-table{width:100%; font-size:11.5px; border-collapse:collapse}
+.mini-table th{font-size:9.5px; text-transform:uppercase; color:var(--text-faint); text-align:left; padding:6px 8px; border-bottom:1px solid var(--border)}
+.mini-table td{padding:7px 8px; border-bottom:1px solid var(--border); color:var(--text-dim)}
+.mini-table td.strong{color:var(--text); font-weight:600}
+.mini-table tr:last-child td{border-bottom:none}
+
+.spark{display:inline-block; vertical-align:middle}
+
+.miniscreen{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px}
+.miniscreen h6{font-size:12.5px; margin-bottom:3px}
+.miniscreen .sub{font-size:11.5px; color:var(--text-faint); margin-bottom:10px}
+.miniscreen .bars{display:flex; gap:6px}
+.miniscreen .bars .b{flex:1; background:var(--surface-2); border-radius:4px; height:36px; position:relative; overflow:hidden}
+.miniscreen .bars .b i{position:absolute; bottom:0; left:0; right:0; background:var(--accent); opacity:.55}
+
+.roadmap-row{display:grid; grid-template-columns:64px 190px 1fr; gap:16px; padding:13px 0; border-bottom:1px solid var(--border); align-items:start}
+.roadmap-row:last-child{border-bottom:none}
+.roadmap-row .ph{font-family:"IBM Plex Mono",monospace; color:var(--accent-ink); font-weight:700; font-size:13px}
+.roadmap-row h6{font-size:13.5px; margin-bottom:2px}
+.roadmap-row .desc{font-size:12.5px; color:var(--text-dim)}
+
+.checklist{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px}
+.checklist li{display:flex; gap:10px; font-size:13.5px; color:var(--text-dim); align-items:flex-start}
+.checklist li b{color:var(--text)}
+.checklist .x{color:var(--short); font-weight:700; flex:none}
+.checklist .v{color:var(--long); font-weight:700; flex:none}
+
+footer{padding:40px 32px 64px; color:var(--text-faint); font-size:12.5px}
+@media (max-width:860px){
+  .toc{display:none}
+  section{padding:44px 18px}
+  .hero{padding:48px 18px 36px}
+  .hero h1{font-size:34px}
+}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<div class="shell">
+  <nav class="toc">
+    <div class="toc-brand"><div class="toc-mark"></div><b>Aegis Quant</b></div>
+    <div class="toc-group">
+      <a href="#principios">01 · Princípios</a>
+      <a href="#arquitetura">02 · Arquitetura</a>
+      <a href="#stack">03 · Stack técnica</a>
+      <a href="#dados">04 · Fontes de dados</a>
+      <a href="#modulos">05 · Módulos / Engines</a>
+      <a href="#portfolio">06 · Portfólio &amp; Capital</a>
+      <a href="#risco">07 · Risk Engine</a>
+      <a href="#estrategias">08 · Estratégias</a>
+      <a href="#modos">09 · Modos &amp; Controle</a>
+      <a href="#banco">10 · Banco de dados</a>
+      <a href="#telas">11 · Interface (telas)</a>
+      <a href="#roadmap">12 · Roadmap</a>
+      <a href="#seguranca">13 · Segurança &amp; defaults</a>
+      <a href="#proximos">14 · Próximos passos</a>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="hdrbar">
+      <span class="tag mono">AEGIS QUANT · BLUEPRINT V1 · BINANCE FUTURES</span>
+      <span class="tag">Documento de arquitetura — não é recomendação de investimento</span>
+    </div>
+
+    <div class="hero">
+      <div class="eyebrow">Especificação de arquitetura · antes de codar</div>
+      <h1>Um sistema de trading quantitativo que trata "não operar" como resultado, não como falha.</h1>
+      <p class="lede">Plano completo do bot de análise e execução automatizada em Binance Futures: como os dados são capturados, como cada módulo decide, como o risco tem poder de veto, e como fica a interface para o usuário operar manualmente ou deixar em automático — tudo antes de escrever a primeira linha de código de produção.</p>
+      <div class="doctrine">"Preservação de capital + expectativa matemática positiva + controle de risco + confluência de dados + execução disciplinada."</div>
+      <div class="stat-row">
+        <div class="stat"><b>4</b><span>modos operacionais</span></div>
+        <div class="stat"><b>3</b><span>buckets de portfólio</span></div>
+        <div class="stat"><b>22</b><span>módulos / engines</span></div>
+        <div class="stat"><b>5</b><span>estratégias base</span></div>
+        <div class="stat"><b>12</b><span>fases de entrega</span></div>
+        <div class="stat"><b>0</b><span>promessas de retorno</span></div>
+      </div>
+    </div>
+
+    <!-- 01 PRINCIPIOS -->
+    <section id="principios">
+      <div class="eyebrow">01 — Doutrina</div>
+      <h2 class="section-title">Princípios que nenhum módulo pode violar</h2>
+      <p class="section-lede">Toda a arquitetura abaixo existe para servir a estas regras. Elas têm prioridade sobre qualquer sinal, qualquer IA e qualquer oportunidade aparente.</p>
+
+      <div class="grid g2" style="margin-bottom:28px">
+        <div class="card">
+          <h4 class="serif" style="font-size:16px;margin-bottom:10px">Nunca um indicador isolado</h4>
+          <p style="font-size:13.5px;color:var(--text-dim)">Proibido: <span class="mono">RSI&lt;30 → BUY</span>. Toda decisão precisa de confluência entre dimensões independentes: técnico, volume, derivativos, estrutura de mercado, macro, notícias, regime e risco. Um sinal forte em uma única dimensão nunca abre posição sozinho.</p>
+        </div>
+        <div class="card">
+          <h4 class="serif" style="font-size:16px;margin-bottom:10px">NO_TRADE é uma decisão, não uma ausência</h4>
+          <p style="font-size:13.5px;color:var(--text-dim)">O sistema é recompensado por identificar quando <b style="color:var(--text)">não</b> há vantagem estatística. Ciclos inteiros de varredura podem — e devem — terminar sem nenhuma ordem enviada.</p>
+        </div>
+      </div>
+
+      <h4 class="serif" style="font-size:16px;margin-bottom:12px">Hierarquia final de decisão</h4>
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">Cada sinal passa por 8 portões em sequência. Qualquer portão crítico que falhe força <span class="pill wait">NO TRADE</span> — os portões abaixo dele nem chegam a ser avaliados.</p>
+      <div class="steps" style="margin-bottom:24px">
+        <span class="step">1 · Validade dos dados</span><span class="arrow">→</span>
+        <span class="step">2 · Saúde do sistema</span><span class="arrow">→</span>
+        <span class="step">3 · Risco</span><span class="arrow">→</span>
+        <span class="step">4 · Exposição de portfólio</span><span class="arrow">→</span>
+        <span class="step">5 · Regime de mercado</span><span class="arrow">→</span>
+        <span class="step">6 · Sinal da estratégia</span><span class="arrow">→</span>
+        <span class="step">7 · Confluência</span><span class="arrow">→</span>
+        <span class="step">8 · Qualidade de execução</span>
+      </div>
+
+      <div class="grid g3">
+        <div class="card"><b class="serif" style="font-size:14px">Risco vs. Lucro</b><p style="font-size:12.5px;color:var(--text-dim);margin-top:6px">Em conflito, o Risk Engine sempre vence — mesmo contra uma oportunidade aparentemente boa.</p></div>
+        <div class="card"><b class="serif" style="font-size:14px">Sinal vs. Qualidade de dado</b><p style="font-size:12.5px;color:var(--text-dim);margin-top:6px">Dado com baixa confiança invalida o sinal, não o contrário.</p></div>
+        <div class="card"><b class="serif" style="font-size:14px">IA vs. Risk Engine</b><p style="font-size:12.5px;color:var(--text-dim);margin-top:6px">A IA generativa classifica, resume e explica — nunca tem autoridade para abrir ordem.</p></div>
+      </div>
+    </section>
+
+    <!-- 02 ARQUITETURA -->
+    <section id="arquitetura">
+      <div class="eyebrow">02 — Visão de sistema</div>
+      <h2 class="section-title">Arquitetura em 6 camadas</h2>
+      <p class="section-lede">Cada camada só conhece a interface da camada vizinha — isso é o que permite trocar uma fonte gratuita por uma paga no futuro sem tocar no núcleo de decisão.</p>
+
+      <div class="layerstack" style="margin-bottom:32px">
+        <div class="layer"><div><span class="lnum">01</span><span class="lname">Coleta (Data Layer)</span></div><div class="ldesc">WebSocket + REST da Binance, FRED, BLS, BEA, Fear&amp;Greed, RSS oficiais — atrás de interfaces <span class="mono">MarketDataProvider</span>, <span class="mono">MacroProvider</span>, <span class="mono">NewsProvider</span>, <span class="mono">SentimentProvider</span>, <span class="mono">OnChainProvider</span>.</div></div>
+        <div class="layer"><div><span class="lnum">02</span><span class="lname">Armazenamento</span></div><div class="ldesc">PostgreSQL + TimescaleDB (histórico, auditoria) e Redis (estado efêmero, filas, locks).</div></div>
+        <div class="layer"><div><span class="lnum">03</span><span class="lname">Processamento</span></div><div class="ldesc">Technical, Derivatives, OrderBook, Flow, Liquidation, Macro, News, Sentiment, Regime, Feature Engine — transformam dados brutos em features normalizadas.</div></div>
+        <div class="layer"><div><span class="lnum">04</span><span class="lname">Decisão</span></div><div class="ldesc">5 estratégias independentes → Confluence Engine → Risk Engine → Portfolio Engine. Produz um <span class="mono">DecisionObject</span> explicável.</div></div>
+        <div class="layer"><div><span class="lnum">05</span><span class="lname">Execução</span></div><div class="ldesc">Execution Engine envia, confirma e reconcilia ordens contra a Binance — a exchange é sempre a fonte de verdade da posição.</div></div>
+        <div class="layer"><div><span class="lnum">06</span><span class="lname">Apresentação</span></div><div class="ldesc">Dashboard (Next.js), notificações (Telegram/e-mail/webhook), relatórios diários, trilha de auditoria.</div></div>
+      </div>
+
+      <h4 class="serif" style="font-size:16px;margin-bottom:12px">Loop em tempo real</h4>
+      <div class="steps">
+        <span class="step">WebSocket</span><span class="arrow">→</span>
+        <span class="step">Feature update</span><span class="arrow">→</span>
+        <span class="step">Signal evaluation</span><span class="arrow">→</span>
+        <span class="step">Risk evaluation</span><span class="arrow">→</span>
+        <span class="step">Decisão</span><span class="arrow">→</span>
+        <span class="step">Execução</span><span class="arrow">→</span>
+        <span class="step">Confirmação (user stream)</span><span class="arrow">→</span>
+        <span class="step">Persistência + auditoria</span>
+      </div>
+    </section>
+
+    <!-- 03 STACK -->
+    <section id="stack">
+      <div class="eyebrow">03 — Implementação</div>
+      <h2 class="section-title">Stack técnica recomendada</h2>
+      <p class="section-lede">Otimizada para rodar localmente no seu PC (Windows 10 Pro), com caminho claro de evolução para VPS se necessário.</p>
+      <div class="tablewrap">
+        <table>
+          <tr><th>Camada</th><th>Escolha</th><th>Por quê</th></tr>
+          <tr><td class="strong">Backend / engines</td><td class="mono">Python 3.12 + FastAPI + asyncio</td><td>Ecossistema quant maduro (pandas, numpy, scikit-learn, python-binance); asyncio lida bem com WebSockets concorrentes.</td></tr>
+          <tr><td class="strong">Execução / exchange</td><td class="mono">python-binance (REST+WS oficiais)</td><td>Suporte direto à API da Binance. CCXT fica disponível só para pesquisa/prototipagem multi-exchange, nunca no caminho crítico de execução.</td></tr>
+          <tr><td class="strong">Banco relacional + séries temporais</td><td class="mono">PostgreSQL 16 + TimescaleDB</td><td>Hypertables para candles, funding, OI, orderbook snapshots; SQL padrão para o resto.</td></tr>
+          <tr><td class="strong">Cache / bus de eventos</td><td class="mono">Redis + Redis Streams</td><td>Estado mais recente, locks distribuídos, rate limiting e fila de eventos (MarketEvent, SignalEvent, RiskEvent...). Evolui para Kafka/Redpanda só se o volume exigir.</td></tr>
+          <tr><td class="strong">Frontend</td><td class="mono">Next.js 14 + TypeScript + Tailwind + shadcn/ui</td><td>Dashboard responsivo, componentes acessíveis, tipagem ponta a ponta com o backend via schema compartilhado.</td></tr>
+          <tr><td class="strong">Gráficos</td><td class="mono">TradingView Lightweight Charts</td><td>Open-source, leve, padrão de mercado para candles/indicadores.</td></tr>
+          <tr><td class="strong">Orquestração local</td><td class="mono">Docker Compose (Docker Desktop + WSL2)</td><td>Cada processo (API, workers, scheduler, Postgres, Redis, frontend) isolado e reiniciável independentemente, tudo no seu PC.</td></tr>
+          <tr><td class="strong">Acesso remoto (opcional)</td><td class="mono">Cloudflare Tunnel / Tailscale</td><td>Ver o dashboard e receber alertas pelo celular sem expor a máquina diretamente à internet.</td></tr>
+          <tr><td class="strong">Notificações</td><td class="mono">Telegram Bot API + SMTP + webhook</td><td>Telegram como canal primário (gratuito, tempo real, funciona bem para alertas de trading).</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- 04 DADOS -->
+    <section id="dados">
+      <div class="eyebrow">04 — Ingestão</div>
+      <h2 class="section-title">Como cada dado é capturado</h2>
+      <p class="section-lede">Prioridade absoluta para fontes oficiais e gratuitas. WebSocket para tudo que tem stream nativo; REST para bootstrap, histórico, reconciliação e para o que a Binance só expõe via polling (open interest, long/short ratio).</p>
+      <div class="tablewrap">
+        <table>
+          <tr><th>Fonte</th><th>Dado</th><th>Captura</th><th>Cadência</th></tr>
+          <tr><td class="strong">Binance Futures WS</td><td>trades, aggTrade, kline, markPrice (funding embutido), bookTicker, depth, user data stream</td><td>WebSocket persistente, heartbeat, reconexão com backoff exponencial</td><td>Tempo real</td></tr>
+          <tr><td class="strong">Binance Futures REST</td><td>exchangeInfo, histórico de klines, funding history, open interest, OI histórico, long/short ratio (global e top trader)</td><td>Polling — estes dados <b style="color:var(--text)">não têm stream nativo</b> na Binance</td><td>OI/long-short: 5–15min · exchangeInfo: 1h · histórico: sob demanda</td></tr>
+          <tr><td class="strong">Binance User Data Stream</td><td>ACCOUNT_UPDATE, ORDER_TRADE_UPDATE, posição, margem, fills</td><td>WebSocket dedicado por conta; estado local reconstruído após cada reconexão</td><td>Tempo real</td></tr>
+          <tr><td class="strong">FRED</td><td>Fed funds rate, yields 2Y/10Y, condições financeiras, inflação, desemprego</td><td>REST poll — séries listadas em <span class="mono">macro_series.yaml</span>, IDs sempre validados, nunca assumidos</td><td>Diário / conforme frequência da série</td></tr>
+          <tr><td class="strong">BLS</td><td>CPI, payrolls (NFP), desemprego, PPI</td><td>REST poll alinhado ao calendário oficial de divulgação</td><td>No horário de release</td></tr>
+          <tr><td class="strong">BEA</td><td>GDP, PCE, renda pessoal</td><td>REST poll</td><td>Mensal / trimestral</td></tr>
+          <tr><td class="strong">Alternative.me</td><td>Fear &amp; Greed Index</td><td>REST poll — usado apenas como um insumo entre vários, nunca isolado</td><td>Diário</td></tr>
+          <tr><td class="strong">RSS/Atom oficiais</td><td>Binance announcements, SEC, CFTC, Federal Reserve, sites de projetos</td><td>Poll periódico de feeds públicos — sem scraping agressivo</td><td>A cada poucos minutos</td></tr>
+          <tr><td class="strong">On-chain (futuro/opcional)</td><td>Exchange flows, stablecoin supply, atividade de holders</td><td>Endpoints públicos quando confiáveis; se não houver dado confiável, registra <span class="mono">DATA_UNAVAILABLE</span> — nunca inventa valor</td><td>Variável</td></tr>
+        </table>
+      </div>
+      <p style="font-size:12px;color:var(--text-faint);margin-top:14px">Nomes exatos de endpoints e parâmetros serão reconfirmados contra a documentação oficial vigente (developers.binance.com, FRED, BLS, BEA) no momento da implementação de cada fase — nunca assumidos de memória.</p>
+    </section>
+
+    <!-- 05 MODULOS -->
+    <section id="modulos">
+      <div class="eyebrow">05 — Núcleo funcional</div>
+      <h2 class="section-title">Catálogo de módulos</h2>
+      <p class="section-lede">22 serviços independentes, cada um com entrada, saída e cadência definidas — nenhum decide sozinho abrir uma posição.</p>
+
+      <div class="modgroup-label">Coleta &amp; dados brutos</div>
+      <div class="grid g4">
+        <div class="modcard"><h4>MarketDataService</h4><div class="kv"><b>in</b>WS/REST Binance</div><div class="kv"><b>out</b>ticks, klines, mark/index price</div><div class="kv"><b>freq</b>tempo real</div></div>
+        <div class="modcard"><h4>DerivativesService</h4><div class="kv"><b>in</b>funding, OI, long/short ratio, basis</div><div class="kv"><b>out</b>séries normalizadas de derivativos</div><div class="kv"><b>freq</b>5–15min</div></div>
+        <div class="modcard"><h4>OrderBookEngine</h4><div class="kv"><b>in</b>depth stream, book ticker</div><div class="kv"><b>out</b>imbalance, spread, microprice</div><div class="kv"><b>freq</b>tempo real</div></div>
+        <div class="modcard"><h4>FlowEngine</h4><div class="kv"><b>in</b>aggTrade, taker buy/sell</div><div class="kv"><b>out</b>CVD, delta, divergências</div><div class="kv"><b>freq</b>tempo real</div></div>
+        <div class="modcard"><h4>LiquidationEngine</h4><div class="kv"><b>in</b>força liquidations, OI, funding</div><div class="kv"><b>out</b>SqueezeScore</div><div class="kv"><b>freq</b>tempo real</div></div>
+        <div class="modcard"><h4>MacroService</h4><div class="kv"><b>in</b>FRED, BLS, BEA</div><div class="kv"><b>out</b>surpresas macro, calendário</div><div class="kv"><b>freq</b>diário/evento</div></div>
+        <div class="modcard"><h4>NewsService</h4><div class="kv"><b>in</b>RSS oficiais</div><div class="kv"><b>out</b>notícia classificada</div><div class="kv"><b>freq</b>poll contínuo</div></div>
+        <div class="modcard"><h4>SentimentService</h4><div class="kv"><b>in</b>Fear &amp; Greed</div><div class="kv"><b>out</b>score normalizado</div><div class="kv"><b>freq</b>diário</div></div>
+      </div>
+
+      <div class="modgroup-label">Análise &amp; contexto</div>
+      <div class="grid g4">
+        <div class="modcard"><h4>TechnicalAnalysisService</h4><div class="kv"><b>in</b>klines multi-timeframe</div><div class="kv"><b>out</b>EMA/RSI/ATR/ADX/estrutura</div><div class="kv"><b>freq</b>por candle fechado</div></div>
+        <div class="modcard"><h4>RegimeEngine</h4><div class="kv"><b>in</b>volatilidade, tendência, eventos</div><div class="kv"><b>out</b>TRENDING/RANGING/EVENT_RISK...</div><div class="kv"><b>freq</b>contínuo</div></div>
+        <div class="modcard"><h4>AssetScanner</h4><div class="kv"><b>in</b>universo Binance Futures</div><div class="kv"><b>out</b>tiers A/B/C/D, elegibilidade</div><div class="kv"><b>freq</b>horário</div></div>
+        <div class="modcard"><h4>FeatureEngine</h4><div class="kv"><b>in</b>todas as engines acima</div><div class="kv"><b>out</b>features normalizadas (z-score/percentil)</div><div class="kv"><b>freq</b>contínuo</div></div>
+        <div class="modcard"><h4>PortfolioCorrelationEngine</h4><div class="kv"><b>in</b>retornos dos ativos em carteira</div><div class="kv"><b>out</b>exposição agregada real</div><div class="kv"><b>freq</b>por decisão</div></div>
+        <div class="modcard"><h4>AsymmetryEngine</h4><div class="kv"><b>in</b>liquidez, momentum, catalisador</div><div class="kv"><b>out</b>AsymmetryScore + cenários</div><div class="kv"><b>freq</b>diário</div></div>
+      </div>
+
+      <div class="modgroup-label">Decisão</div>
+      <div class="grid g4">
+        <div class="modcard"><h4>StrategyEngine ×5</h4><div class="kv"><b>in</b>features normalizadas</div><div class="kv"><b>out</b>signal_strength por estratégia</div><div class="kv"><b>freq</b>contínuo</div></div>
+        <div class="modcard"><h4>ConfluenceEngine</h4><div class="kv"><b>in</b>scores de todas estratégias</div><div class="kv"><b>out</b>score 0–100 + decisão candidata</div><div class="kv"><b>freq</b>por avaliação</div></div>
+        <div class="modcard"><h4>RiskEngine</h4><div class="kv"><b>in</b>decisão candidata + estado da conta</div><div class="kv"><b>out</b>PASS / BLOCK + sizing</div><div class="kv"><b>freq</b>toda decisão — veto absoluto</div></div>
+        <div class="modcard"><h4>PortfolioEngine</h4><div class="kv"><b>in</b>alocação Core/Growth/Speculative</div><div class="kv"><b>out</b>limites por bucket, rebalance</div><div class="kv"><b>freq</b>contínuo</div></div>
+      </div>
+
+      <div class="modgroup-label">Execução &amp; suporte</div>
+      <div class="grid g4">
+        <div class="modcard"><h4>ExecutionEngine</h4><div class="kv"><b>in</b>ordem aprovada</div><div class="kv"><b>out</b>fill confirmado via user stream</div><div class="kv"><b>freq</b>por ordem</div></div>
+        <div class="modcard"><h4>BacktestEngine</h4><div class="kv"><b>in</b>histórico + estratégia versionada</div><div class="kv"><b>out</b>métricas, walk-forward, Monte Carlo</div><div class="kv"><b>freq</b>sob demanda</div></div>
+        <div class="modcard"><h4>MLService</h4><div class="kv"><b>in</b>features + outcomes históricos</div><div class="kv"><b>out</b>prob. de +1R/+2R, EV esperado</div><div class="kv"><b>freq</b>retrain agendado</div></div>
+        <div class="modcard"><h4>NotificationService</h4><div class="kv"><b>in</b>eventos de sistema/trade/risco</div><div class="kv"><b>out</b>Telegram/e-mail/webhook</div><div class="kv"><b>freq</b>por evento</div></div>
+        <div class="modcard"><h4>AuditService</h4><div class="kv"><b>in</b>toda decisão e execução</div><div class="kv"><b>out</b>log imutável</div><div class="kv"><b>freq</b>contínuo</div></div>
+        <div class="modcard"><h4>MonitoringService</h4><div class="kv"><b>in</b>saúde de WS/API/DB/execução</div><div class="kv"><b>out</b>alertas, health checks</div><div class="kv"><b>freq</b>contínuo</div></div>
+      </div>
+    </section>
+
+    <!-- 06 PORTFOLIO -->
+    <section id="portfolio">
+      <div class="eyebrow">06 — Alocação de capital</div>
+      <h2 class="section-title">Três buckets, um só risco agregado</h2>
+      <p class="section-lede">Maior potencial de retorno nunca significa maior alocação. O Speculative busca assimetria; o Core busca sobrevivência.</p>
+
+      <div class="tablewrap" style="margin-bottom:24px">
+        <table>
+          <tr><th>Bucket</th><th>Alocação default</th><th>Ativos</th><th>Objetivo</th><th>Estilo</th></tr>
+          <tr><td class="strong">Core</td><td class="mono">70%</td><td>BTC, ETH e outros de altíssima liquidez</td><td>Preservação de capital</td><td>Baixa frequência, baixo risco por trade</td></tr>
+          <tr><td class="strong">Growth</td><td class="mono">25%</td><td>Altcoins líquidas (Tier B/C)</td><td>Crescimento com assimetria controlada</td><td>Breakouts, momentum, tendência</td></tr>
+          <tr><td class="strong">Speculative</td><td class="mono">5%</td><td>Ativos de alta volatilidade (Tier D)</td><td>Oportunidades assimétricas de cauda</td><td>Alocação pequena, teses de catalisador</td></tr>
+        </table>
+      </div>
+
+      <div class="grid g2" style="margin-bottom:24px">
+        <div class="card">
+          <h4 class="serif" style="font-size:15px;margin-bottom:10px">CapitalAllocationEngine</h4>
+          <p style="font-size:13px;color:var(--text-dim)">Usuário define capital total e percentuais por bucket. O engine impede: alocação acima de 100%, concentração excessiva num único ativo, e correlação agregada disfarçada de diversificação (10 posições correlacionadas com BTC = 1 exposição, não 10).</p>
+        </div>
+        <div class="card">
+          <h4 class="serif" style="font-size:15px;margin-bottom:10px">Rebalanceamento</h4>
+          <p style="font-size:13px;color:var(--text-dim)">Se Speculative crescer de 5% para, digamos, 20% do patrimônio por valorização, o sistema realiza parcialmente e devolve ao alvo — configurável via <span class="mono">rebalance_threshold</span>. Nunca deixa o bucket de maior risco dominar a carteira por inércia.</p>
+        </div>
+      </div>
+
+      <h4 class="serif" style="font-size:16px;margin-bottom:10px">AsymmetryEngine — cenários, não promessas</h4>
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">Para cada ativo especulativo, o sistema nunca diz "isso vai fazer 10x". Ele calcula um <span class="mono">ASYMMETRY_SCORE</span> a partir de liquidez, momentum, força relativa, catalisador e regime — e apresenta cenários:</p>
+      <div class="tablewrap">
+        <table>
+          <tr><th>Cenário</th><th>Preço ilustrativo (entrada $0.10)</th><th>Interpretação</th></tr>
+          <tr><td class="strong">Bear case</td><td class="mono">$0.07</td><td>Tese falha, stop estrutural atingido</td></tr>
+          <tr><td class="strong">Base case</td><td class="mono">$0.14</td><td>Cenário mais provável dado o histórico do padrão</td></tr>
+          <tr><td class="strong">Bull case</td><td class="mono">$0.25</td><td>Catalisador confirma, momentum sustenta</td></tr>
+          <tr><td class="strong">Extreme bull</td><td class="mono">$0.60</td><td>Cauda — possível, não esperado, nunca prometido</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- 07 RISCO -->
+    <section id="risco">
+      <div class="eyebrow">07 — Autoridade máxima</div>
+      <h2 class="section-title">Risk Engine</h2>
+      <p class="section-lede">Nenhuma estratégia pode ignorar o Risk Engine. O fluxo é sempre Signal → Risk Check → Position Sizing → Execution — nunca Signal → Execution direto.</p>
+
+      <div class="grid g2" style="margin-bottom:24px">
+        <div class="codebox">
+risk_amount = account_equity × risk_per_trade<br>
+stop_distance = abs(entry_price − stop_price)<br>
+position_size = risk_amount / stop_distance<br>
+<span class="c">// ajustado por tickSize, stepSize, minNotional,</span><br>
+<span class="c">// leverage, fees e slippage esperado</span>
+        </div>
+        <div class="card">
+          <h4 class="serif" style="font-size:15px;margin-bottom:8px">Limites configuráveis (defaults conservadores)</h4>
+          <div class="tablewrap"><table>
+            <tr><td class="strong">risk_per_trade</td><td class="mono">0.25% – 1.00%</td></tr>
+            <tr><td class="strong">max_daily_loss</td><td class="mono">1% – 3%</td></tr>
+            <tr><td class="strong">max_drawdown</td><td class="mono">10% (halt automático)</td></tr>
+            <tr><td class="strong">consecutive_losses</td><td class="mono">3 → cooldown · 5 → reduz risco</td></tr>
+          </table></div>
+        </div>
+      </div>
+
+      <h4 class="serif" style="font-size:16px;margin-bottom:12px">Estados de drawdown</h4>
+      <div class="steps" style="margin-bottom:28px">
+        <span class="step" style="border-color:var(--ok);color:var(--ok)">NORMAL</span><span class="arrow">→</span>
+        <span class="step" style="border-color:var(--warn);color:var(--warn)">CAUTION</span><span class="arrow">→</span>
+        <span class="step" style="border-color:var(--warn);color:var(--warn)">REDUCED_RISK</span><span class="arrow">→</span>
+        <span class="step" style="border-color:var(--crit);color:var(--crit)">HALTED</span>
+      </div>
+
+      <h4 class="serif" style="font-size:16px;margin-bottom:12px">Gatilhos do Kill Switch global</h4>
+      <div class="chips">
+        <span class="chip">WebSocket instável</span><span class="chip">Divergência posição local × Binance</span><span class="chip">Ordem sem stop</span>
+        <span class="chip">Slippage anormal</span><span class="chip">Spread anormal</span><span class="chip">Clock drift</span>
+        <span class="chip">Falha de reconciliação</span><span class="chip">Erro de assinatura da API</span><span class="chip">Falha no banco/Redis</span>
+      </div>
+    </section>
+
+    <!-- 08 ESTRATEGIAS -->
+    <section id="estrategias">
+      <div class="eyebrow">08 — Geração de sinal</div>
+      <h2 class="section-title">Cinco estratégias, um placar de confluência</h2>
+      <p class="section-lede">Cada estratégia roda de forma independente e produz um score. Os pesos entre elas não são fixados por opinião — são hipóteses iniciais a validar em backtest/walk-forward.</p>
+
+      <div class="grid g3" style="margin-bottom:28px">
+        <div class="modcard"><h4>01 · Trend + Pullback</h4><p style="font-size:12.5px;color:var(--text-dim)">Tendência no timeframe maior + alinhamento de EMAs + ADX adequado + pullback com confirmação de volume e estrutura.</p></div>
+        <div class="modcard"><h4>02 · Breakout</h4><p style="font-size:12.5px;color:var(--text-dim)">Consolidação + expansão de volume + confirmação de OI e taker buy pressure. Evita romper com liquidez fraca.</p></div>
+        <div class="modcard"><h4>03 · Liquidation / Squeeze</h4><p style="font-size:12.5px;color:var(--text-dim)">Funding extremo + desequilíbrio de OI + aceleração de liquidações → SqueezeScore. Nunca entra só por funding extremo.</p></div>
+        <div class="modcard"><h4>04 · Mean Reversion</h4><p style="font-size:12.5px;color:var(--text-dim)">Desvio extremo + volatilidade alta + exaustão de liquidação + confirmação de reversão. Nunca vende só por RSI&gt;70.</p></div>
+        <div class="modcard"><h4>05 · Event Reaction</h4><p style="font-size:12.5px;color:var(--text-dim)">Surpresa macro (actual vs. forecast) + confirmação de mercado (preço, OI, volume). Nunca opera só pela notícia.</p></div>
+      </div>
+
+      <h4 class="serif" style="font-size:16px;margin-bottom:12px">Exemplo de placar de confluência</h4>
+      <div class="screen" style="max-width:520px">
+        <div class="screen-chrome"><span class="path mono">confluence · BTCUSDT · BREAKOUT_V2</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div style="padding:18px 20px">
+          <table class="mini-table">
+            <tr><td>Technical</td><td class="mono strong">18/20</td></tr>
+            <tr><td>Volume</td><td class="mono strong">14/15</td></tr>
+            <tr><td>Derivatives</td><td class="mono strong">17/20</td></tr>
+            <tr><td>Market structure</td><td class="mono strong">13/15</td></tr>
+            <tr><td>Macro</td><td class="mono strong">8/10</td></tr>
+            <tr><td>News</td><td class="mono strong">6/10</td></tr>
+            <tr><td>Risk check</td><td><span class="pill ok">PASS</span></td></tr>
+          </table>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <b class="serif" style="font-size:14px">Score total</b>
+            <span class="mono" style="font-size:20px;font-weight:600;color:var(--accent-ink)">76/100</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 MODOS -->
+    <section id="modos">
+      <div class="eyebrow">09 — Como você opera</div>
+      <h2 class="section-title">Modos de negociação e nível de automação</h2>
+      <p class="section-lede">Dois eixos independentes de controle: <b style="color:var(--text)">em que ambiente</b> o sistema executa, e <b style="color:var(--text)">quanto de autonomia</b> ele tem para agir nesse ambiente. É esse segundo eixo que coloca o volante na sua mão sempre que você quiser.</p>
+
+      <h4 class="serif" style="font-size:16px;margin:0 0 12px">Eixo 1 — Ambiente de execução (gate sequencial)</h4>
+      <div class="steps" style="margin-bottom:28px">
+        <span class="step">BACKTEST</span><span class="arrow">→</span>
+        <span class="step">PAPER</span><span class="arrow">→</span>
+        <span class="step">SHADOW</span><span class="arrow">→</span>
+        <span class="step" style="border-color:var(--accent);color:var(--accent-ink)">LIVE</span>
+      </div>
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:28px">LIVE só é liberado depois que a mesma estratégia — mesmo código, mesmo <span class="mono">SignalEngine</span>, mesmo <span class="mono">RiskEngine</span> — passou por backtest aprovado, walk-forward aprovado, paper trading aprovado e shadow trading aprovado. A única peça que troca entre modos é o <span class="mono">ExecutionProvider</span>. Existe uma trava explícita contra o acidente clássico: <span class="pill crit">paper → live sem querer</span>.</p>
+
+      <h4 class="serif" style="font-size:16px;margin:0 0 12px">Eixo 2 — Nível de automação (o que você controla)</h4>
+      <div class="grid g3">
+        <div class="card">
+          <span class="pill wait" style="margin-bottom:10px">MANUAL</span>
+          <p style="font-size:13px;color:var(--text-dim)">O bot só analisa e mostra o sinal completo (entrada, stop, TP, score). Nenhuma ordem é enviada — você decide e executa manualmente pelo painel ou fora dele.</p>
+        </div>
+        <div class="card">
+          <span class="pill accent" style="margin-bottom:10px">SEMI_AUTO</span>
+          <p style="font-size:13px;color:var(--text-dim)">O bot calcula sinal + tamanho + stop + TP e coloca na <b style="color:var(--text)">Fila de Aprovação</b>. Você aprova ou rejeita com um clique, com toda a explicabilidade visível antes de confirmar.</p>
+        </div>
+        <div class="card">
+          <span class="pill ok" style="margin-bottom:10px">FULL_AUTO</span>
+          <p style="font-size:13px;color:var(--text-dim)">O bot executa sozinho, sempre sujeito aos portões do Risk Engine. O Kill Switch continua com veto absoluto e visível a qualquer momento.</p>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--text-dim);margin-top:18px">O nível de automação é configurável <b style="color:var(--text)">globalmente</b>, <b style="color:var(--text)">por bucket</b> (ex.: Core em FULL_AUTO conservador, Speculative em SEMI_AUTO) e <b style="color:var(--text)">por estratégia</b>. O botão de Kill Switch fica sempre visível no topo da interface, em qualquer tela, independente do modo.</p>
+    </section>
+
+    <!-- 10 BANCO -->
+    <section id="banco">
+      <div class="eyebrow">10 — Persistência</div>
+      <h2 class="section-title">Banco de dados</h2>
+      <p class="section-lede">PostgreSQL + TimescaleDB. Nenhum log histórico é editável — auditoria é append-only.</p>
+      <div class="grid g3">
+        <div class="card"><h4 class="serif" style="font-size:14px;margin-bottom:8px">Mercado &amp; séries temporais</h4><p style="font-size:12.5px;color:var(--text-dim)" class="mono">candles · trades · orderbook_snapshots · funding_rates · open_interest · liquidations · long_short_ratios · taker_volume · market_features</p></div>
+        <div class="card"><h4 class="serif" style="font-size:14px;margin-bottom:8px">Macro &amp; notícias</h4><p style="font-size:12.5px;color:var(--text-dim)" class="mono">macro_series · macro_observations · economic_events · news · news_entities · news_sentiment</p></div>
+        <div class="card"><h4 class="serif" style="font-size:14px;margin-bottom:8px">Sinais &amp; estratégias</h4><p style="font-size:12.5px;color:var(--text-dim)" class="mono">signals · strategies · strategy_versions · model_versions</p></div>
+        <div class="card"><h4 class="serif" style="font-size:14px;margin-bottom:8px">Execução &amp; portfólio</h4><p style="font-size:12.5px;color:var(--text-dim)" class="mono">orders · fills · positions · portfolio_snapshots · risk_events</p></div>
+        <div class="card"><h4 class="serif" style="font-size:14px;margin-bottom:8px">Pesquisa &amp; backtest</h4><p style="font-size:12.5px;color:var(--text-dim)" class="mono">backtest_runs · backtest_trades · daily_metrics</p></div>
+        <div class="card"><h4 class="serif" style="font-size:14px;margin-bottom:8px">Conta &amp; auditoria</h4><p style="font-size:12.5px;color:var(--text-dim)" class="mono">users · accounts · api_credentials_metadata · assets · markets · system_events · audit_logs</p></div>
+      </div>
+    </section>
+
+    <!-- 11 TELAS -->
+    <section id="telas">
+      <div class="eyebrow">11 — O que você vê</div>
+      <h2 class="section-title">Interface: mapa e telas principais</h2>
+      <p class="section-lede">Dashboard web (Next.js) organizado por grupos. O Kill Switch e o seletor de modo de automação ficam sempre visíveis, em qualquer tela.</p>
+
+      <div class="tablewrap" style="margin-bottom:40px">
+        <table>
+          <tr><th>Grupo</th><th>Telas</th></tr>
+          <tr><td class="strong">Visão geral</td><td>Overview Dashboard</td></tr>
+          <tr><td class="strong">Controle</td><td>Control Center (modos, automação, fila de aprovação, kill switch)</td></tr>
+          <tr><td class="strong">Mercados</td><td>Market Scanner · Detalhe do Ativo</td></tr>
+          <tr><td class="strong">Portfólio</td><td>Alocação Core/Growth/Speculative · Posições · Correlação &amp; Exposição</td></tr>
+          <tr><td class="strong">Estratégias</td><td>Strategy Registry &amp; Analytics · Feed de Sinais/Decisões · Fila de Aprovação</td></tr>
+          <tr><td class="strong">Risco</td><td>Risk Control Center · Configuração de Risco (com trilha de auditoria)</td></tr>
+          <tr><td class="strong">Pesquisa</td><td>Backtesting · Walk-Forward · Monte Carlo · Growth Simulator · Moonshot Scanner</td></tr>
+          <tr><td class="strong">Inteligência</td><td>Calendário Macro · Feed de Notícias · Sentimento</td></tr>
+          <tr><td class="strong">Diário &amp; relatórios</td><td>Trading Journal · Relatório Diário · Audit Log</td></tr>
+          <tr><td class="strong">Sistema</td><td>Data Health / Observabilidade · Alertas · Configurações (chaves API, capital, ambiente)</td></tr>
+        </table>
+      </div>
+
+      <!-- SCREEN: Overview -->
+      <h4 class="serif" style="font-size:16px;margin-bottom:4px">Overview Dashboard</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Primeira tela ao abrir o sistema — estado da conta e do sistema de relance.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/dashboard</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Geral</div><a class="on">Overview</a><a>Control Center</a>
+            <div class="grp">Mercados</div><a>Scanner</a><a>Ativo</a>
+            <div class="grp">Portfólio</div><a>Alocação</a><a>Posições</a>
+            <div class="grp">Sistema</div><a>Data Health</a><a>Config</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar">
+              <h5>Visão geral — Conta</h5>
+              <div class="modebar"><span class="modeopt">PAPER</span><span class="modeopt on">FULL_AUTO</span><span class="killbtn">KILL SWITCH</span></div>
+            </div>
+            <div class="tiles">
+              <div class="tile"><div class="tl">Equity</div><div class="tv">$1,842.30</div></div>
+              <div class="tile"><div class="tl">PnL diário</div><div class="tv up">+$14.20</div></div>
+              <div class="tile"><div class="tl">Drawdown</div><div class="tv">2.1% <span class="pill ok" style="margin-left:4px">NORMAL</span></div></div>
+              <div class="tile"><div class="tl">Regime BTC</div><div class="tv" style="font-size:13px">TRENDING_BULL</div></div>
+            </div>
+            <table class="mini-table">
+              <tr><th>Ativo</th><th>Estratégia</th><th>Lado</th><th>Score</th><th>Status</th></tr>
+              <tr><td class="strong">BTCUSDT</td><td>Trend Pullback</td><td><span class="pill long">LONG</span></td><td class="mono">78</td><td>Aberta</td></tr>
+              <tr><td class="strong">SOLUSDT</td><td>Breakout</td><td><span class="pill short">SHORT</span></td><td class="mono">64</td><td>Aguardando aprovação</td></tr>
+              <tr><td class="strong">AVAXUSDT</td><td>Mean Reversion</td><td><span class="pill wait">NO_TRADE</span></td><td class="mono">41</td><td>Descartado — baixa confluência</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Control Center -->
+      <h4 class="serif" style="font-size:16px;margin:36px 0 4px">Control Center</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Onde manual e automático se encontram — o cockpit do operador.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/control-center</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Geral</div><a>Overview</a><a class="on">Control Center</a>
+            <div class="grp">Estratégias</div><a>Fila de Aprovação</a><a>Feed de Sinais</a>
+            <div class="grp">Risco</div><a>Risk Center</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar"><h5>Automação — por bucket</h5></div>
+            <div class="grid g3" style="margin-bottom:18px">
+              <div class="miniscreen"><h6>Core</h6><div class="sub">BTC, ETH</div><div class="modebar"><span class="modeopt">MANUAL</span><span class="modeopt">SEMI_AUTO</span><span class="modeopt on">FULL_AUTO</span></div></div>
+              <div class="miniscreen"><h6>Growth</h6><div class="sub">Altcoins líquidas</div><div class="modebar"><span class="modeopt">MANUAL</span><span class="modeopt on">SEMI_AUTO</span><span class="modeopt">FULL_AUTO</span></div></div>
+              <div class="miniscreen"><h6>Speculative</h6><div class="sub">Alta volatilidade</div><div class="modebar"><span class="modeopt on">MANUAL</span><span class="modeopt">SEMI_AUTO</span><span class="modeopt">FULL_AUTO</span></div></div>
+            </div>
+            <div class="app-topbar" style="margin-bottom:10px"><h5 style="font-size:14px">Fila de aprovação (SEMI_AUTO)</h5></div>
+            <table class="mini-table">
+              <tr><th>Ativo</th><th>Estratégia</th><th>Entrada</th><th>Stop</th><th>Risco</th><th>Ação</th></tr>
+              <tr><td class="strong">SOLUSDT</td><td>Breakout V2</td><td class="mono">$142.80</td><td class="mono">$138.10</td><td class="mono">0.5%</td><td><span class="pill ok">Aprovar</span> <span class="pill crit">Rejeitar</span></td></tr>
+              <tr><td class="strong">LINKUSDT</td><td>Squeeze</td><td class="mono">$11.42</td><td class="mono">$11.05</td><td class="mono">0.3%</td><td><span class="pill ok">Aprovar</span> <span class="pill crit">Rejeitar</span></td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Market Scanner -->
+      <h4 class="serif" style="font-size:16px;margin:36px 0 4px">Market Scanner</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Ranking interno para priorizar processamento — nunca uma recomendação direta de compra.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/markets/scanner</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Mercados</div><a class="on">Scanner</a><a>Detalhe do Ativo</a>
+            <div class="grp">Inteligência</div><a>Macro</a><a>Notícias</a><a>Sentimento</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar"><h5>Scanner — Tier A/B</h5><div class="modebar"><span class="chip">238 ativos elegíveis</span></div></div>
+            <table class="mini-table">
+              <tr><th>Symbol</th><th>Preço</th><th>24h</th><th>Vol Z</th><th>Funding</th><th>Regime</th><th>Sinal</th><th>Confiança</th></tr>
+              <tr><td class="strong">BTCUSDT</td><td class="mono">$67,240</td><td class="mono" style="color:var(--long)">+2.4%</td><td class="mono">1.8</td><td class="mono">0.010%</td><td>TRENDING_BULL</td><td><span class="pill long">LONG</span></td><td class="mono">78</td></tr>
+              <tr><td class="strong">SOLUSDT</td><td class="mono">$142.80</td><td class="mono" style="color:var(--long)">+5.1%</td><td class="mono">2.6</td><td class="mono">0.031%</td><td>BREAKOUT</td><td><span class="pill short">SHORT</span></td><td class="mono">64</td></tr>
+              <tr><td class="strong">DOGEUSDT</td><td class="mono">$0.121</td><td class="mono" style="color:var(--short)">-1.2%</td><td class="mono">0.4</td><td class="mono">0.004%</td><td>RANGING</td><td><span class="pill wait">NO_TRADE</span></td><td class="mono">29</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Portfolio Allocation -->
+      <h4 class="serif" style="font-size:16px;margin:36px 0 4px">Alocação de Portfólio</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Buckets, alvo vs. atual, e correlação agregada.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/portfolio/allocation</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Portfólio</div><a class="on">Alocação</a><a>Posições</a><a>Correlação</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar"><h5>Capital total: $1,842.30</h5></div>
+            <div class="grid g3">
+              <div class="miniscreen"><h6>Core</h6><div class="sub">Alvo 70% · Atual 68.4%</div><div class="bars"><div class="b"><i style="height:68%"></i></div><div class="b"><i style="height:70%;background:var(--structural);opacity:.35"></i></div></div></div>
+              <div class="miniscreen"><h6>Growth</h6><div class="sub">Alvo 25% · Atual 26.9%</div><div class="bars"><div class="b"><i style="height:27%"></i></div><div class="b"><i style="height:25%;background:var(--structural);opacity:.35"></i></div></div></div>
+              <div class="miniscreen"><h6>Speculative</h6><div class="sub">Alvo 5% · Atual 4.7%</div><div class="bars"><div class="b"><i style="height:5%"></i></div><div class="b"><i style="height:5%;background:var(--structural);opacity:.35"></i></div></div></div>
+            </div>
+            <p style="font-size:12px;color:var(--text-faint);margin-top:14px">Dentro da tolerância de rebalanceamento — nenhuma ação necessária.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Risk Control Center -->
+      <h4 class="serif" style="font-size:16px;margin:36px 0 4px">Risk Control Center</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Estado do drawdown, limites diários, histórico do kill switch.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/risk</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Risco</div><a class="on">Risk Center</a><a>Configuração</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar"><h5>Estado atual: <span class="pill ok" style="margin-left:6px">NORMAL</span></h5></div>
+            <div class="tiles">
+              <div class="tile"><div class="tl">Perda diária</div><div class="tv">0.6% / 2.0%</div></div>
+              <div class="tile"><div class="tl">Drawdown</div><div class="tv">2.1% / 10%</div></div>
+              <div class="tile"><div class="tl">Perdas seguidas</div><div class="tv">1 / 3</div></div>
+              <div class="tile"><div class="tl">Exposição correlata</div><div class="tv">42%</div></div>
+            </div>
+            <table class="mini-table">
+              <tr><th>Evento</th><th>Gatilho</th><th>Ação tomada</th></tr>
+              <tr><td class="mono">14:32:08</td><td>Spread anormal DOGEUSDT</td><td><span class="pill warn">Entrada bloqueada</span></td></tr>
+              <tr><td class="mono">09:11:44</td><td>Reconexão WS &gt; 3x/min</td><td><span class="pill ok">Auto-resolvido</span></td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Research -->
+      <h4 class="serif" style="font-size:16px;margin:36px 0 4px">Pesquisa — Backtest &amp; Walk-Forward</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Onde uma estratégia prova (ou não) que merece rodar em produção.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/research/backtest</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Pesquisa</div><a class="on">Backtest</a><a>Walk-Forward</a><a>Monte Carlo</a><a>Growth Simulator</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar"><h5>trend_pullback_v3 · 2022–2025</h5><span class="pill accent">status: em validação</span></div>
+            <div class="tiles">
+              <div class="tile"><div class="tl">Profit Factor</div><div class="tv">1.42</div></div>
+              <div class="tile"><div class="tl">Win Rate</div><div class="tv">47.8%</div></div>
+              <div class="tile"><div class="tl">Max Drawdown</div><div class="tv down">-8.9%</div></div>
+              <div class="tile"><div class="tl">Sharpe</div><div class="tv">1.15</div></div>
+            </div>
+            <p style="font-size:12px;color:var(--text-faint)">Simula fees, funding, slippage, spread e execução parcial — nunca assume preenchimento perfeito. Exige aprovação em janelas de walk-forward antes de seguir para paper trading.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCREEN: Data Health -->
+      <h4 class="serif" style="font-size:16px;margin:36px 0 4px">Data Health / Observabilidade</h4>
+      <p style="font-size:12.5px;color:var(--text-faint);margin-bottom:0">Saúde de cada conexão — se algo aqui fica vermelho, o Risk Engine já sabe.</p>
+      <div class="screen">
+        <div class="screen-chrome"><span class="path mono">/system/health</span><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="app">
+          <div class="app-nav">
+            <div class="grp">Sistema</div><a class="on">Data Health</a><a>Alertas</a><a>Configurações</a>
+          </div>
+          <div class="app-main">
+            <div class="app-topbar"><h5>Status dos componentes</h5></div>
+            <table class="mini-table">
+              <tr><th>Componente</th><th>Status</th><th>Latência</th><th>Último evento</th></tr>
+              <tr><td class="strong">Binance WebSocket</td><td><span class="pill ok">Conectado</span></td><td class="mono">42ms</td><td class="mono">agora</td></tr>
+              <tr><td class="strong">Binance REST</td><td><span class="pill ok">OK</span></td><td class="mono">118ms</td><td class="mono">2min atrás</td></tr>
+              <tr><td class="strong">FRED / BLS / BEA</td><td><span class="pill ok">OK</span></td><td class="mono">—</td><td class="mono">hoje 08:30</td></tr>
+              <tr><td class="strong">PostgreSQL</td><td><span class="pill ok">OK</span></td><td class="mono">3ms</td><td class="mono">—</td></tr>
+              <tr><td class="strong">Redis</td><td><span class="pill ok">OK</span></td><td class="mono">1ms</td><td class="mono">—</td></tr>
+              <tr><td class="strong">Execution Engine</td><td><span class="pill warn">Degradado</span></td><td class="mono">890ms</td><td class="mono">reconectando...</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <p style="font-size:12.5px;color:var(--text-faint);margin-top:28px">Telas adicionais seguem o mesmo padrão visual: <b style="color:var(--text-dim)">Detalhe do Ativo</b> (técnico + derivativos + orderbook + flow lado a lado), <b style="color:var(--text-dim)">Correlação &amp; Exposição</b> (matriz de correlação e exposição líquida), <b style="color:var(--text-dim)">Calendário Macro</b> e <b style="color:var(--text-dim)">Feed de Notícias</b> (classificadas por ativo/sentimento/qualidade da fonte), <b style="color:var(--text-dim)">Trading Journal</b> e <b style="color:var(--text-dim)">Audit Log</b> (toda decisão com WHY_ENTERED/WHY_NOT_ENTERED/WHY_EXITED), e <b style="color:var(--text-dim)">Configurações</b> (chaves API via variável de ambiente, nunca visíveis na UI).</p>
+    </section>
+
+    <!-- 12 ROADMAP -->
+    <section id="roadmap">
+      <div class="eyebrow">12 — Entrega incremental</div>
+      <h2 class="section-title">Roadmap de 12 fases</h2>
+      <p class="section-lede">Cada fase entrega código funcional, testes, logs, documentação e migrations antes de avançar. Nada é implementado de uma vez.</p>
+      <div class="card">
+        <div class="roadmap-row"><div class="ph">01</div><h6>Binance Market Collector</h6><div class="desc">WS + REST, reconexão, bootstrap de klines/exchangeInfo.</div></div>
+        <div class="roadmap-row"><div class="ph">02</div><h6>Banco de dados</h6><div class="desc">PostgreSQL + TimescaleDB, schema inicial, migrations.</div></div>
+        <div class="roadmap-row"><div class="ph">03</div><h6>Technical Engine</h6><div class="desc">Indicadores multi-timeframe, estrutura de mercado.</div></div>
+        <div class="roadmap-row"><div class="ph">04</div><h6>Derivatives Engine</h6><div class="desc">Funding, OI, long/short ratio, liquidações, orderbook.</div></div>
+        <div class="roadmap-row"><div class="ph">05</div><h6>Macro Engine</h6><div class="desc">FRED, BLS, BEA, calendário de eventos, surpresa macro.</div></div>
+        <div class="roadmap-row"><div class="ph">06</div><h6>News Engine</h6><div class="desc">RSS oficiais, classificador, score de confiança da fonte.</div></div>
+        <div class="roadmap-row"><div class="ph">07</div><h6>Risk Engine</h6><div class="desc">Position sizing, limites diários, drawdown, kill switch.</div></div>
+        <div class="roadmap-row"><div class="ph">08</div><h6>Backtester</h6><div class="desc">Simulação com fees, funding, slippage, execução parcial.</div></div>
+        <div class="roadmap-row"><div class="ph">09</div><h6>Paper Trading</h6><div class="desc">Mesmo pipeline de produção, ExecutionProvider simulado.</div></div>
+        <div class="roadmap-row"><div class="ph">10</div><h6>Dashboard</h6><div class="desc">Todas as telas do mapa acima, Control Center incluso.</div></div>
+        <div class="roadmap-row"><div class="ph">11</div><h6>Machine Learning</h6><div class="desc">Somente após histórico suficiente — targets probabilísticos.</div></div>
+        <div class="roadmap-row"><div class="ph">12</div><h6>Live Trading</h6><div class="desc">Liberado só após aprovação em todas as fases anteriores.</div></div>
+      </div>
+    </section>
+
+    <!-- 13 SEGURANCA -->
+    <section id="seguranca">
+      <div class="eyebrow">13 — Postura padrão</div>
+      <h2 class="section-title">Segurança e defaults seguros</h2>
+      <p class="section-lede">O sistema nasce travado. Cada trava precisa ser destravada conscientemente pelo usuário — nunca por padrão.</p>
+
+      <div class="grid g2" style="margin-bottom:24px">
+        <div class="codebox">
+BINANCE_API_KEY=<span class="c">••••••</span><br>
+BINANCE_API_SECRET=<span class="c">••••••</span><br>
+BINANCE_TESTNET=<span style="color:var(--long)">true</span><br>
+LIVE_TRADING=<span style="color:var(--short)">false</span><br>
+RISK_PER_TRADE=0.005<br>
+MAX_DAILY_LOSS=0.02<br>
+MAX_DRAWDOWN=0.10<br>
+<span class="c">// withdrawals: desabilitado na chave API — sempre</span>
+        </div>
+        <div class="card">
+          <ul class="checklist">
+            <li><span class="x">✕</span> Martingale / dobrar após perda</li>
+            <li><span class="x">✕</span> Average down automático sem sinal novo</li>
+            <li><span class="x">✕</span> Meta de "lucro todo dia"</li>
+            <li><span class="x">✕</span> Promessa de 10x, 50x, retorno garantido</li>
+            <li><span class="v">✓</span> Chaves só via variável de ambiente / secret manager</li>
+            <li><span class="v">✓</span> Secrets nunca em log ou no frontend</li>
+            <li><span class="v">✓</span> Posição real sempre reconciliada contra a Binance</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 14 PROXIMOS PASSOS -->
+    <section id="proximos" style="border-bottom:none">
+      <div class="eyebrow">14 — A partir daqui</div>
+      <h2 class="section-title">Próximos passos</h2>
+      <p class="section-lede">Com este blueprint validado, o trabalho começa pela Fase 1. Cada fase entregue virá com:</p>
+      <div class="chips" style="margin-bottom:28px">
+        <span class="chip">Arquivos criados</span><span class="chip">Arquitetura</span><span class="chip">Migrations do banco</span>
+        <span class="chip">Endpoints</span><span class="chip">Testes automatizados</span><span class="chip">Exemplos de uso</span>
+        <span class="chip">Comandos para rodar</span><span class="chip">Riscos conhecidos</span><span class="chip">Limitações</span><span class="chip">Próximos passos</span>
+      </div>
+      <div class="card" style="max-width:640px">
+        <p class="serif" style="font-size:16px;font-style:italic;color:var(--text)">"O objetivo não é prever o futuro. É identificar condições que historicamente apresentaram vantagem, controlar a perda quando a hipótese estiver errada, e permitir que os ganhos corram quando a hipótese estiver certa."</p>
+      </div>
+    </section>
+
+    <footer>
+      Aegis Quant — blueprint de arquitetura, v1 · Documento de planejamento técnico. Não constitui aconselhamento financeiro nem promessa de resultado.
+    </footer>
+  </div>
+</div>
