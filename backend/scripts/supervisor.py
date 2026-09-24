@@ -69,6 +69,7 @@ _SUPERVISED_SCRIPTS = [
     "run_bingx_shadow_trading.py",
     "run_momentum_trading.py",
     "run_bingx_momentum_trading.py",
+    "run_daily_reset.py",
     "run_dashboard.py",
 ]
 

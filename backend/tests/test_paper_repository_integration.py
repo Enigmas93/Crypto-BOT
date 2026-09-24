@@ -81,6 +81,18 @@ async def test_close_position_is_a_safe_no_op_when_nothing_is_open(pool):
 
 
 @pytest.mark.asyncio
+async def test_get_open_symbols_lists_every_symbol_with_a_position(pool):
+    repo = PaperRepository(pool)
+    account_id = _account_id()
+    await repo.open_position(account_id, "BTCUSDT", _position())
+    await repo.open_position(account_id, "ETHUSDT", _position())
+
+    symbols = await repo.get_open_symbols(account_id)
+
+    assert set(symbols) == {"BTCUSDT", "ETHUSDT"}
+
+
+@pytest.mark.asyncio
 async def test_positions_are_independent_per_symbol(pool):
     repo = PaperRepository(pool)
     account_id = _account_id()

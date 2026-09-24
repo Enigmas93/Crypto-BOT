@@ -73,6 +73,7 @@ class ShadowTradingEngine:
             # inconsistency, close the local record so it stops blocking
             # new entries, and surface it loudly for manual review.
             await self.shadow_repo.close_position(account_id, config.symbol)
+            await self.risk_repo.set_exposure(account_id, len(await self.shadow_repo.get_open_symbols(account_id)))
             return {
                 "action": "RECONCILIATION_FAILED", "stop_status": stop_status.status, "tp_status": tp_status.status,
                 "message": "position is flat on the exchange but neither bracket leg shows FILLED - manual review needed",
@@ -102,6 +103,7 @@ class ShadowTradingEngine:
         )
         await self.shadow_repo.record_trade(trade)
         await self.shadow_repo.close_position(account_id, config.symbol)
+        await self.risk_repo.set_exposure(account_id, len(await self.shadow_repo.get_open_symbols(account_id)))
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)
         kill_state = await self.kill_switch_repo.check_and_maybe_trigger(
             account_id, account.equity, account.peak_equity, account.consecutive_losses, self.risk_settings,
@@ -190,6 +192,7 @@ class ShadowTradingEngine:
             confluence_score=confluence.confluence_score, reasons=reasons,
         )
         await self.shadow_repo.open_position(account_id, config.symbol, position)
+        await self.risk_repo.set_exposure(account_id, len(await self.shadow_repo.get_open_symbols(account_id)))
         return {
             "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price,
             "quantity": position.quantity, "confluence_score": confluence.confluence_score,

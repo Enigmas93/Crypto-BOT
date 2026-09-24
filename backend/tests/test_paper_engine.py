@@ -71,6 +71,9 @@ class _FakePaperRepo:
     async def get_open_position(self, account_id, symbol):
         return self.positions.get((account_id, symbol))
 
+    async def get_open_symbols(self, account_id):
+        return [sym for (acct, sym) in self.positions if acct == account_id]
+
     async def open_position(self, account_id, symbol, position):
         if (account_id, symbol) in self.positions:
             raise ValueError("already open")
@@ -94,12 +97,16 @@ class _FakeRiskRepo:
         self.account = account
         self.outcomes: list[float] = []
         self.risk_events: list[tuple] = []
+        self.exposure_calls: list[tuple] = []
 
     async def get_account_state(self, account_id):
         return self.account
 
     async def insert_risk_event(self, account_id, symbol, side, decision, strategy_id=None):
         self.risk_events.append((account_id, symbol, side, decision))
+
+    async def set_exposure(self, account_id, open_positions_count, correlated_exposure_pct=0.0):
+        self.exposure_calls.append((account_id, open_positions_count, correlated_exposure_pct))
 
     async def record_trade_outcome(self, account_id, pnl):
         self.outcomes.append(pnl)

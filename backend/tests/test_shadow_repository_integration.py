@@ -75,6 +75,18 @@ async def test_close_position_removes_it(pool):
 
 
 @pytest.mark.asyncio
+async def test_get_open_symbols_lists_every_symbol_with_a_position(pool):
+    repo = ShadowRepository(pool)
+    account_id = _account_id()
+    await repo.open_position(account_id, "BTCUSDT", _position())
+    await repo.open_position(account_id, "ETHUSDT", _position())
+
+    symbols = await repo.get_open_symbols(account_id)
+
+    assert set(symbols) == {"BTCUSDT", "ETHUSDT"}
+
+
+@pytest.mark.asyncio
 async def test_record_and_fetch_trades(pool):
     repo = ShadowRepository(pool)
     account_id = _account_id()

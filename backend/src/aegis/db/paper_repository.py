@@ -31,6 +31,15 @@ class PaperRepository:
             confluence_score=row["confluence_score"], reasons=list(row["reasons"]),
         )
 
+    async def get_open_symbols(self, account_id: str) -> list[str]:
+        """Every symbol with a currently-open position for this account -
+        used to keep `risk_account_state.open_positions_count` accurate
+        (RiskEngine's `max_open_positions` gate reads that field directly,
+        spec section 142)."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT symbol FROM paper_positions WHERE account_id = $1", account_id)
+        return [r["symbol"] for r in rows]
+
     async def open_position(self, account_id: str, symbol: str, position: OpenPosition) -> None:
         """Raises if a position is already open for this (account, symbol)
         - PaperTradingEngine only ever calls this after confirming none

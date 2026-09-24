@@ -31,6 +31,15 @@ class RiskRepository:
             row = await conn.fetchrow("SELECT * FROM risk_account_state WHERE account_id = $1", account_id)
         return self._to_account_state(row) if row else None
 
+    async def get_updated_at(self, account_id: str):
+        """For the daily-reset scheduler ONLY (`scripts/run_daily_reset.py`)
+        - lets it tell "already reset today" (something touched this row
+        today, possibly `reset_daily` itself) apart from "stale since a
+        previous day" without a dedicated tracking column. Returns None if
+        the account doesn't exist yet."""
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval("SELECT updated_at FROM risk_account_state WHERE account_id = $1", account_id)
+
     async def initialize_account_state(self, account_id: str, starting_equity: float) -> AccountState:
         """No-op if the account already exists - this never resets a live
         account's history just because startup code calls it again."""

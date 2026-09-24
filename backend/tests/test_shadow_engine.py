@@ -71,6 +71,9 @@ class _FakeShadowRepo:
     async def get_open_position(self, account_id, symbol):
         return self.positions.get((account_id, symbol))
 
+    async def get_open_symbols(self, account_id):
+        return [sym for (acct, sym) in self.positions if acct == account_id]
+
     async def open_position(self, account_id, symbol, position):
         if (account_id, symbol) in self.positions:
             raise ValueError("already open")
@@ -94,12 +97,16 @@ class _FakeRiskRepo:
         self.account = account
         self.outcomes: list[float] = []
         self.risk_events: list[tuple] = []
+        self.exposure_calls: list[tuple] = []
 
     async def get_account_state(self, account_id):
         return self.account
 
     async def insert_risk_event(self, account_id, symbol, side, decision, strategy_id=None):
         self.risk_events.append((account_id, symbol, side, decision))
+
+    async def set_exposure(self, account_id, open_positions_count, correlated_exposure_pct=0.0):
+        self.exposure_calls.append((account_id, open_positions_count, correlated_exposure_pct))
 
     async def record_trade_outcome(self, account_id, pnl):
         self.outcomes.append(pnl)
@@ -310,6 +317,10 @@ async def test_position_closed_via_stop_records_trade_and_cancels_leftover():
     assert (config.account_id, config.symbol) not in shadow_repo.positions
     assert len(shadow_repo.trades) == 1
     assert risk_repo.outcomes == [pytest.approx(result["trade"].net_pnl)]
+    # Regression: risk_account_state.open_positions_count (what
+    # RiskEngine's max_open_positions gate actually reads) must be kept in
+    # sync with the real open-position count, not left stale.
+    assert risk_repo.exposure_calls[-1] == (config.account_id, 0, 0.0)
 
 
 @pytest.mark.asyncio
@@ -404,7 +415,7 @@ async def test_entry_blocked_by_risk_engine_with_tiny_equity():
 async def test_entry_opened_persists_shadow_position_with_real_order_ids():
     closes, volume = _consolidation_then_breakout(n=261, consolidation_len=260)
     df = _candles_df(closes, volume)
-    engine, shadow_repo, _, _, execution = _engine(df)
+    engine, shadow_repo, risk_repo, _, execution = _engine(df)
     config = ShadowTradingConfig(symbol="BTCUSDT", interval="1h", strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210)
 
     result = await engine.run_once(config, _rules())
@@ -418,6 +429,9 @@ async def test_entry_opened_persists_shadow_position_with_real_order_ids():
     # (found live: SOLUSDT stayed at the account's pre-existing leverage,
     # 20x, because nothing ever called set_leverage before this fix)
     assert execution.open_bracket_calls[0][-1] == config.leverage
+    # regression: open_positions_count (RiskEngine's max_open_positions
+    # gate) must reflect the position just opened, not stay stale at 0.
+    assert risk_repo.exposure_calls[-1] == (config.account_id, 1, 0.0)
 
 
 @pytest.mark.asyncio

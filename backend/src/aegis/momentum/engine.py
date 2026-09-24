@@ -85,6 +85,7 @@ class MomentumTradingEngine:
         else:
             # Never fabricate a price - same principle as ShadowTradingEngine.
             await self.momentum_repo.close_position(account_id, symbol)
+            await self.risk_repo.set_exposure(account_id, len(await self.momentum_repo.get_open_symbols(account_id)))
             return {
                 "action": "RECONCILIATION_FAILED", "stop_status": stop_status.status,
                 "trailing_status": trailing_status.status,
@@ -113,6 +114,7 @@ class MomentumTradingEngine:
         )
         await self.momentum_repo.record_trade(trade)
         await self.momentum_repo.close_position(account_id, symbol)
+        await self.risk_repo.set_exposure(account_id, len(await self.momentum_repo.get_open_symbols(account_id)))
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)
         kill_state = await self.kill_switch_repo.check_and_maybe_trigger(
             account_id, account.equity, account.peak_equity, account.consecutive_losses, self.risk_settings,
@@ -196,6 +198,7 @@ class MomentumTradingEngine:
             confluence_score=confluence.confluence_score, momentum_score=momentum_score, reasons=reasons,
         )
         await self.momentum_repo.open_position(account_id, symbol, position)
+        await self.risk_repo.set_exposure(account_id, len(await self.momentum_repo.get_open_symbols(account_id)))
         return {
             "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price,
             "quantity": position.quantity, "confluence_score": confluence.confluence_score,
