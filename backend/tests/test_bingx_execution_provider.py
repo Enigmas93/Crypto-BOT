@@ -30,6 +30,7 @@ class _FakeRestClient:
         self.fail_emergency_close = False
         self.fail_set_leverage = False
         self.fail_cancel_code: int | None = None
+        self.fail_cancel_message = "cancel failed"
         self._next_order_id = 1
 
     def _new_id(self) -> int:
@@ -69,7 +70,7 @@ class _FakeRestClient:
     async def cancel_order(self, symbol, order_id):
         self.calls.append(("cancel_order", symbol, order_id))
         if self.fail_cancel_code is not None:
-            raise BingXOrderError("cancel failed", code=self.fail_cancel_code)
+            raise BingXOrderError(self.fail_cancel_message, code=self.fail_cancel_code)
         return _order(order_id, symbol=symbol, status="CANCELED")
 
     async def get_order(self, symbol, order_id):
@@ -164,6 +165,38 @@ async def test_cancel_leftover_order_swallows_order_not_exist_code():
 async def test_cancel_leftover_order_propagates_unexpected_error_codes():
     rest = _FakeRestClient()
     rest.fail_cancel_code = 100500
+    provider = BingXExecutionProvider(rest)
+
+    with pytest.raises(BingXOrderError):
+        await provider.cancel_leftover_order("BTCUSDT", 42)
+
+
+@pytest.mark.asyncio
+async def test_cancel_leftover_order_swallows_order_not_exist_message_even_with_a_different_code():
+    """Regression: found live that BingX returns code 109400 (its generic
+    "invalid parameters" catch-all, NOT the documented 109421) with
+    message "order not exist" when a bracket leg's sibling was already
+    auto-removed by the exchange after the other leg filled. Missing this
+    crashed the whole polling process before the local position record
+    could be marked closed - the exact reason a position already flat on
+    BingX kept showing as open on the dashboard indefinitely."""
+    rest = _FakeRestClient()
+    rest.fail_cancel_code = 109400
+    rest.fail_cancel_message = "order not exist"
+    provider = BingXExecutionProvider(rest)
+
+    await provider.cancel_leftover_order("BTCUSDT", 42)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_cancel_leftover_order_does_not_swallow_a_genuine_109400_validation_error():
+    """109400 is BingX's generic catch-all code, reused for many unrelated
+    validation failures - only the "order not exist" message (or code
+    109421) means "already gone", so a different 109400 message must
+    still propagate."""
+    rest = _FakeRestClient()
+    rest.fail_cancel_code = 109400
+    rest.fail_cancel_message = "symbol format invalid"
     provider = BingXExecutionProvider(rest)
 
     with pytest.raises(BingXOrderError):

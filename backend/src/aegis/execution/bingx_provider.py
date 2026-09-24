@@ -161,13 +161,29 @@ class BingXExecutionProvider:
             return False
 
     async def cancel_leftover_order(self, symbol: str, order_id: int) -> None:
-        """Best-effort: an already-filled/canceled order (code 109421) IS
-        the desired end state, not a failure, so it's swallowed rather than
-        raised."""
+        """Best-effort: an already-filled/canceled order IS the desired end
+        state, not a failure, so it's swallowed rather than raised - same
+        principle as `BinanceExecutionProvider.cancel_leftover_order`.
+
+        Found live (2026-09-24) that this is NOT reliably code 109421
+        ("The specified order does not exist") as documented: when one
+        bracket leg fills, BingX auto-removes the sibling leg itself
+        (standard OCO-style behavior), and cancelling that already-gone
+        sibling actually comes back as code 109400 (BingX's generic
+        "invalid parameters" catch-all) with message "order not exist" -
+        a real, observed inconsistency in BingX's own error taxonomy, not
+        a hypothetical. This crashed the whole polling process every
+        cycle it hit a stale leftover order - the local position record
+        was never marked closed because the crash happened before that
+        step ran, which is exactly why a position already flat on the
+        exchange kept showing as open on the dashboard indefinitely.
+        Matches on the message text (case-insensitively), not just the
+        code, mirroring how the Binance provider matches "Unknown order"
+        in its own message rather than trusting a single fixed code."""
         try:
             await self.rest.cancel_order(symbol, order_id)
         except BingXOrderError as exc:
-            if exc.code != _UNKNOWN_ORDER_CODE:
+            if exc.code != _UNKNOWN_ORDER_CODE and "order not exist" not in str(exc).lower():
                 raise
 
     async def get_position(self, symbol: str) -> PositionRisk:
