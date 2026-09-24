@@ -5,9 +5,10 @@ this AFTER scripts/verify_bingx_execution_setup.py confirms clean, and
 BEFORE ever starting the continuous poller (run_bingx_momentum_trading.py).
 
 Two parts:
-  1. Read-only: scans real 24h Binance stats (same scanner every Momentum
-     account uses - the ranking doesn't change depending on which exchange
-     later executes) and prints the current liquid-momentum ranking.
+  1. Read-only: scans BingX's OWN real 24h ticker stats (not Binance's -
+     see run_bingx_momentum_trading.py's module docstring for why: scanning
+     Binance's universe to trade on BingX produces real listing mismatches)
+     and prints the current liquid-momentum ranking.
   2. Places one small real TRAILING_STOP_MARKET bracket on BingX VST,
      verifies every piece against what the exchange itself reports, then
      immediately undoes it - same pattern as verify_bingx_shadow_trading.py.
@@ -30,7 +31,6 @@ from aegis.config import get_settings  # noqa: E402
 from aegis.execution.bingx_provider import BingXExecutionProvider  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient  # noqa: E402
-from aegis.providers.binance.rest_client import BinanceFuturesRestClient  # noqa: E402
 from aegis.scanner.ranking import rank_by_momentum  # noqa: E402
 
 _LOG = get_logger("scripts.verify_bingx_momentum_trading")
@@ -52,7 +52,6 @@ async def _main() -> None:
         log_event(_LOG, "missing_credentials", level=40, message="Run scripts/verify_bingx_execution_setup.py first")
         return
 
-    binance_rest = BinanceFuturesRestClient(testnet=True)
     bingx_rest = BingXFuturesRestClient(
         testnet=True, api_key=settings.bingx_api_key, api_secret=settings.bingx_api_secret,
     )
@@ -67,8 +66,8 @@ async def _main() -> None:
             )
             return
 
-        log_event(_LOG, "step_1_scan", message="Ranking real liquid symbols by 24h momentum (Binance data)")
-        tickers = await binance_rest.get_24h_tickers()
+        log_event(_LOG, "step_1_scan", message="Ranking real liquid symbols by 24h momentum (BingX's own data)")
+        tickers = await bingx_rest.get_24h_tickers()
         candidates = rank_by_momentum(tickers, min_quote_volume=settings.momentum_min_quote_volume, top_n=5)
         log_event(
             _LOG, "scan_result",
@@ -80,7 +79,7 @@ async def _main() -> None:
         log_event(_LOG, "step_2_opening_trailing_bracket", symbol=_TEST_SYMBOL)
         rules = await bingx_rest.get_symbol_rules()
         symbol_rules = rules[_TEST_SYMBOL]
-        klines = await binance_rest.get_klines(_TEST_SYMBOL, "1m", limit=1)
+        klines = await bingx_rest.get_klines(_TEST_SYMBOL, "1m", limit=1)
         current_price = klines[-1].close
 
         raw_qty = (symbol_rules.min_notional * 1.30) / current_price
@@ -133,7 +132,6 @@ async def _main() -> None:
             ),
         )
     finally:
-        await binance_rest.aclose()
         await bingx_rest.aclose()
 
 

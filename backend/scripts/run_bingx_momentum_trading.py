@@ -1,22 +1,23 @@
 #!/usr/bin/env python
 """Runs the Fase 16 BingX Momentum Engine forever - the BingX counterpart
-to scripts/run_momentum_trading.py, same "moonshot" scanner, same liquid-
-pairs-only floor, same everything except where the order is executed.
+to scripts/run_momentum_trading.py, same "moonshot" scanner logic and
+liquid-pairs-only floor, same everything except where the order is
+executed AND where the scanner looks for candidates.
 
-Scanning still reads Binance's real 24h ticker universe (`rest` below) -
-the scanner ranks by real market momentum, which doesn't change depending
-on which exchange later executes the trade. Only EXECUTION happens on
-BingX, via BingXExecutionProvider, behind the exact same
-MomentumTradingEngine every other exchange uses.
-
-One real difference from the Binance version: Momentum's symbol universe
-is DYNAMIC (the scanner's current top-N across the whole Binance exchange,
-not a fixed pre-vetted list like Shadow Trading's 7 symbols) - a candidate
-symbol is not guaranteed to also be listed on BingX. Symbol rules are
-fetched from BingX's OWN contract list (needed for correct order sizing on
-the exchange the order actually goes to) and any candidate BingX doesn't
-list is skipped for this account (logged once, not spammy) rather than
-guessed at.
+Scanning and candle data come from BingX's OWN market (`bingx_rest` below
+serves both), NOT Binance's - found live (2026-09-24) that scanning
+Binance's ticker universe to trade on BingX produces real symbol
+mismatches: a candidate Binance's scanner ranks highly is not guaranteed
+to exist on BingX at all (BROCCOLI714USDT was a confirmed real example -
+newer/thinner speculative tokens are exactly where the two exchanges'
+listings diverge most), and even when a symbol IS listed on both, its
+price action can differ enough between them that computing technical
+indicators from the wrong exchange's candles would be misleading. This
+account now scans, reads candles, and sizes orders entirely against
+BingX's own contract list, ticker feed, and klines
+(`BingXFuturesRestClient.get_24h_tickers`/`get_klines`, added specifically
+for this) - the exact same scanning/ranking/confluence logic Binance's
+Momentum account uses, just pointed at a different exchange's market data.
 
 Runs as account_id "momentum_bingx" - independent of Binance's "momentum"
 account (separate risk_account_state/kill_switch/momentum_positions rows,
@@ -54,7 +55,6 @@ from aegis.momentum.engine import MomentumTradingEngine  # noqa: E402
 from aegis.momentum.models import MomentumConfig  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXRestError  # noqa: E402
-from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceRestError  # noqa: E402
 
 _LOG = get_logger("scripts.run_bingx_momentum_trading")
 _STARTING_EQUITY = 1000.0
@@ -77,9 +77,9 @@ async def _main() -> None:
         log_event(_LOG, "missing_credentials", level=40, message="Run scripts/verify_bingx_execution_setup.py first")
         return
 
-    # Data/scanning stays on Binance (public, no credentials needed) -
-    # only order execution goes through BingX.
-    rest = BinanceFuturesRestClient(testnet=True)
+    # Scanning, candles, order sizing AND execution all go through BingX's
+    # own market now - no Binance client anywhere in this script (Fase 16
+    # follow-up fix, see module docstring).
     bingx_rest = BingXFuturesRestClient(
         testnet=True, api_key=settings.bingx_api_key, api_secret=settings.bingx_api_secret,
     )
@@ -89,7 +89,7 @@ async def _main() -> None:
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     execution = BingXExecutionProvider(bingx_rest)
-    engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings)
+    engine = MomentumTradingEngine(bingx_rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings)
 
     config = MomentumConfig(
         interval=settings.momentum_interval, account_id=_ACCOUNT_ID,
@@ -113,11 +113,12 @@ async def _main() -> None:
             min_quote_volume=config.min_quote_volume, top_n=config.top_n,
             scan_interval=settings.momentum_scan_interval_seconds,
             poll_interval=settings.momentum_poll_interval_seconds, testnet=settings.bingx_testnet,
+            data_source="bingx",
         )
 
         candidate_symbols: dict[str, float] = {}  # symbol -> momentum_score
         last_scan = 0.0
-        warned_unlisted: set[str] = set()  # avoid re-logging the same BingX-unlisted symbol every cycle
+        warned_unlisted: set[str] = set()  # defensive only now - see run loop comment
 
         while True:
             now = time.monotonic()
@@ -125,7 +126,7 @@ async def _main() -> None:
                 try:
                     open_symbols = set(await momentum_repo.get_open_symbols(_ACCOUNT_ID))
                     candidates = await engine.scan(config, exclude=open_symbols)
-                except BinanceRestError as exc:
+                except BingXRestError as exc:
                     log_event(_LOG, "transient_network_error", level=30, stage="scan", error=str(exc))
                 else:
                     candidate_symbols = {c.symbol: c.momentum_score for c in candidates}
@@ -150,16 +151,19 @@ async def _main() -> None:
                     symbol_rules = rules_by_symbol.get(symbol)
                     if symbol_rules is None:
                         if rules_by_symbol and symbol not in warned_unlisted:
-                            # A genuine, expected case for a dynamic universe - not
-                            # every symbol Binance's scanner surfaces is also listed
-                            # on BingX. Logged once per symbol, not every cycle.
-                            log_event(_LOG, "symbol_not_listed_on_bingx", level=30, symbol=symbol)
+                            # Scanning is now BingX-native, so this should be
+                            # rare (only a symbol delisted between the ticker
+                            # scan and the contract-rules fetch) rather than
+                            # the common case it used to be when scanning
+                            # Binance's universe - still handled defensively,
+                            # logged once per symbol rather than every cycle.
+                            log_event(_LOG, "symbol_missing_from_contract_list", level=30, symbol=symbol)
                             warned_unlisted.add(symbol)
                         continue
                     momentum_score = candidate_symbols.get(symbol, 0.0)
                     try:
                         result = await engine.run_once_for_symbol(config, symbol, symbol_rules, momentum_score)
-                    except (BinanceRestError, BingXRestError) as exc:
+                    except BingXRestError as exc:
                         # A transient network/DNS blip must not kill the
                         # whole process - real stop/trailing orders already
                         # on the exchange keep protecting any open position
@@ -191,7 +195,6 @@ async def _main() -> None:
             await asyncio.sleep(settings.momentum_poll_interval_seconds)
     finally:
         await notifier.aclose()
-        await rest.aclose()
         await bingx_rest.aclose()
         await close_pool(pool)
 

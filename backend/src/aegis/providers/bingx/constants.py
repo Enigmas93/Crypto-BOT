@@ -18,12 +18,20 @@ REST_BASE_URL_VST = "https://open-api-vst.bingx.com"  # fallback: https://open-a
 
 WS_BASE_URL = "wss://open-api-swap.bingx.com/swap-market"
 
-# Public, unauthenticated market-data endpoints - not used by this project
-# (Binance remains the data source), kept here only because the execution
-# provider needs "Get Contract Info" for symbol precision/lot rules.
+# Public, unauthenticated market-data endpoints. Binance remains the data
+# source for every symbol this project already trades on Binance (Shadow,
+# core Momentum) - "ticker_24hr"/"klines" here exist ONLY for BingX's own
+# Momentum scanner (Fase 16), which must rank and read candles for BingX's
+# OWN listed universe, not Binance's: a candidate Binance's scanner finds
+# is not guaranteed to exist on BingX at all (confirmed live -
+# BROCCOLI714USDT is a real example), and even when a symbol exists on
+# both, its price action can differ enough between the two exchanges that
+# technical indicators computed from the wrong one would be misleading.
 PUBLIC_ENDPOINTS = {
     "contracts": "/openApi/swap/v2/quote/contracts",
     "server_time": "/openApi/swap/v2/server/time",
+    "ticker_24hr": "/openApi/swap/v2/quote/ticker",
+    "klines": "/openApi/swap/v3/quote/klines",
 }
 
 # Signed (account/trading) endpoints.

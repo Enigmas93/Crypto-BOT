@@ -3050,6 +3050,64 @@ Dashboard) já rodando havia horas em produção real de testnet:
   qual capital alocar - o usuário mencionou US$100 como valor inicial
   planejado quando chegar a hora de sair do testnet.
 
+### Bug real: Momentum BingX escaneava a Binance, não a BingX (mesmo dia)
+
+- O usuário observou incompatibilidade real entre os tokens que o scanner
+  encontrava e o que a BingX realmente lista - `run_bingx_momentum_trading.py`
+  usava o cliente da Binance tanto para o ranking por momentum (24h tickers)
+  quanto para os candles, só trocando a EXECUÇÃO para a BingX. Um símbolo
+  como `BROCCOLI714USDT` (achado ao vivo) simplesmente não existe na BingX -
+  tokens novos/especulativos são exatamente onde as duas corretoras mais
+  divergem em listagem.
+- Corrigido de verdade, não contornado: `BingXFuturesRestClient` ganhou
+  `get_24h_tickers()`/`get_klines()` próprios, contra o mercado da BingX
+  (`GET /openApi/swap/v2/quote/ticker`, `GET /openApi/swap/v3/quote/klines`).
+  Descoberta real ao testar ao vivo: o endpoint de klines da BingX NÃO segue
+  o formato de array posicional que a própria documentação descreve - cada
+  candle vem como objeto `{open,high,low,close,volume,time}`, sem close
+  time, sem quote volume, sem contagem de trades, e em ordem do mais recente
+  pro mais antigo (o resto do projeto assume mais antigo primeiro). `time`
+  foi confirmado ao vivo como o horário de ABERTURA do candle (caía dentro
+  da janela do candle ainda em formação, comparado contra o relógio do
+  servidor) - `close_time` é derivado disso (abertura + duração do intervalo
+  - 1ms, mesma convenção da Binance), e a lista é invertida antes de
+  devolver. Os 4 campos que a BingX não fornece foram deixados como `0` -
+  um valor real de "não disponível", nunca inventado; o Strategy Engine só
+  lê OHLCV mesmo.
+- `run_bingx_momentum_trading.py` agora não importa mais nada da Binance -
+  scanner, candles, regras de símbolo e execução são 100% BingX. Validado
+  ao vivo: 906 tickers reais da BingX, ranking produzindo candidatos reais
+  (`NCCOGOLD2USDUSDT`, `BTCUSDT`), klines corretos (249 candles fechados de
+  250, o último corretamente marcado como ainda em formação).
+- 27 testes novos (`test_bingx_rest_client.py`) cobrindo o parsing dos
+  campos reais da BingX, a inversão de ordem, a derivação de close_time, e
+  a detecção de candle ainda aberto. 624/624 testes passando no total.
+
+### Redesign do dashboard (Console Tático) + cobertura completa de dados
+
+- Layout escolhido pelo usuário entre 6 conceitos apresentados via Artifact
+  (3 arquiteturas de informação + 3 estilos visuais para o "padrão de
+  página" Binance/BingX): "Console Tático" - tema escuro estilo HUD,
+  números monoespaçados, gauge radial de exposição de risco, com uma opção
+  clara (fundo branco, paleta do conceito "Grid Modular") alternável e
+  persistida por navegador.
+- Auditoria completa do que o backend já fornece vs. o que o dashboard
+  mostrava revelou dados reais nunca expostos: Macro Engine (FRED/BLS/BEA),
+  Derivatives Engine (funding/open interest/long-short ratio), Liquidation
+  Engine, histórico de trades por trade individual de cada backtest, e o
+  histórico de disparos/resets do Kill Switch (endpoint já existia, nunca
+  era renderizado). Um bug real também apareceu nessa auditoria: o status
+  de notícia por ativo lia campos (`source_count`/`sentiment`) que não
+  existem na resposta real (`distinct_sources`/`dominant_sentiment`) -
+  sempre mostrava "—" apesar do dado real já estar disponível.
+- Refinamentos pedidos depois de ver a primeira versão: contagem de
+  vitórias/derrotas por estratégia (derivada do próprio replay de equity já
+  buscado, sem nova chamada), coluna "Estratégia" nas tabelas de posições
+  abertas (um mesmo card de corretora mistura Shadow e Momentum - sem essa
+  coluna não dava pra saber qual posição veio de qual motor), e o Histórico
+  reorganizado em grupos por estratégia (Paper/Shadow/Momentum) em vez de
+  uma linha do tempo única misturada.
+
 ## Métricas da Fase 11
 
 - 456/456 testes passando no total do backend (10 novos desta fase, todos

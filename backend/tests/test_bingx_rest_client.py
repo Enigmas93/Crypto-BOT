@@ -29,6 +29,75 @@ def test_from_bingx_symbol_strips_hyphen():
     assert from_bingx_symbol("1000PEPE-USDT") == "1000PEPEUSDT"
 
 
+TICKER_24H = [
+    {"symbol": "BTC-USDT", "priceChange": "1.5", "priceChangePercent": "2.50", "lastPrice": "84336.3",
+     "lastQty": "0.0002", "openPrice": "84334.8", "highPrice": "84887.2", "lowPrice": "82850.0",
+     "volume": "36372.92", "quoteVolume": "3055555699.56", "openTime": 1, "closeTime": 2,
+     "askPrice": "84337.5", "askQty": "0.3", "bidPrice": "84334.7", "bidQty": "0.0"},
+    {"symbol": "1000PEPE-USDT", "priceChange": "0.0001", "priceChangePercent": "10.0", "lastPrice": "0.0044",
+     "lastQty": "1", "openPrice": "0.004", "highPrice": "0.0045", "lowPrice": "0.0039",
+     "volume": "1000000", "quoteVolume": "4400000", "openTime": 1, "closeTime": 2,
+     "askPrice": "0.0044", "askQty": "1", "bidPrice": "0.0043", "bidQty": "1"},
+]
+
+# BingX's real kline response - an object per candle, NOT the Binance-style
+# positional array the reference doc (wrongly) describes. Newest first.
+KLINES_NEWEST_FIRST = [
+    {"open": "84335.8", "close": "84357.8", "high": "84372.7", "low": "84318.0", "volume": "45.6686", "time": 1_700_000_120_000},
+    {"open": "84299.5", "close": "84335.8", "high": "84340.0", "low": "84293.7", "volume": "21.2433", "time": 1_700_000_060_000},
+    {"open": "84260.1", "close": "84299.5", "high": "84299.5", "low": "84260.0", "volume": "42.4724", "time": 1_700_000_000_000},
+]
+
+
+@pytest.mark.asyncio
+async def test_get_24h_tickers_parses_real_field_names_and_normalizes_symbol():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/openApi/swap/v2/quote/ticker"
+        return _ok(TICKER_24H)
+
+    client = _client_with_transport(handler)
+    tickers = await client.get_24h_tickers()
+    assert tickers[0].symbol == "BTCUSDT"  # normalized back from BTC-USDT
+    assert tickers[0].price_change_pct == 2.50
+    assert tickers[0].quote_volume == pytest.approx(3055555699.56)
+    assert tickers[0].source == "bingx"
+    assert tickers[1].symbol == "1000PEPEUSDT"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_klines_reverses_to_oldest_first_and_fills_close_time():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/openApi/swap/v3/quote/klines"
+        assert request.url.params["symbol"] == "BTC-USDT"
+        return _ok(KLINES_NEWEST_FIRST)
+
+    client = _client_with_transport(handler)
+    klines = await client.get_klines("BTCUSDT", "1m", limit=3)
+    # reversed to oldest-first, matching Binance's convention
+    assert [k.open_time_ms for k in klines] == [1_700_000_000_000, 1_700_000_060_000, 1_700_000_120_000]
+    assert klines[0].close == 84299.5
+    assert klines[0].close_time_ms == 1_700_000_000_000 + 60_000 - 1  # derived, BingX gives no close time
+    assert klines[0].source == "bingx"
+    assert klines[0].quote_volume == 0.0  # genuinely not provided by this endpoint - never fabricated
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_klines_marks_the_still_forming_candle_as_not_closed():
+    import time as time_module
+    now_ms = int(time_module.time() * 1000)
+    live_row = [{"open": "1", "close": "1", "high": "1", "low": "1", "volume": "1", "time": now_ms - 1000}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _ok(live_row)
+
+    client = _client_with_transport(handler)
+    klines = await client.get_klines("BTCUSDT", "1m", limit=1)
+    assert klines[0].is_closed is False  # opened 1s ago, a 1m candle isn't closed yet
+    await client.aclose()
+
+
 def _client_with_transport(handler) -> BingXFuturesRestClient:
     client = BingXFuturesRestClient(testnet=True, api_key="test-key", api_secret="test-secret")
     client._client = httpx.AsyncClient(base_url=client._client.base_url, transport=httpx.MockTransport(handler))

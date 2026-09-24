@@ -191,7 +191,12 @@ function renderExchangeView(exchange) {
   renderActivityList(`activity-${exchange}`, accountIds);
   renderStrategyGrid(`strategies-${exchange}`, accountIds);
   const realAccounts = exchange === "binance" ? ["shadow", "momentum"] : ["shadow_bingx", "momentum_bingx"];
-  renderPositionsTable(`positions-table-${exchange}`, realAccounts, false);
+  // showAccountColumn=true here even though this table only ever holds
+  // ONE exchange's positions - it still mixes Shadow and Momentum, and
+  // without this column there was no way to tell which strategy opened
+  // a given position (real gap - a screenshot showed two positions with
+  // no way to tell them apart).
+  renderPositionsTable(`positions-table-${exchange}`, realAccounts, true);
   renderRiskMonitor(`risk-${exchange}`, primaryAccountId);
   renderLogFeed(`feed-${exchange}`, accountIds);
   renderTimeline(`history-${exchange}`, accountIds);
@@ -342,6 +347,17 @@ function renderActivityList(elId, accountIds) {
 }
 
 // -- strategy cards -------------------------------------------------------
+// Wins/losses derived from the same equity-history replay already fetched
+// for the performance chart (real closed trades, net_pnl per point) - no
+// extra request needed.
+function winLossCounts(accountId) {
+  const hist = cache.equityHistory[accountId];
+  const trades = hist && hist.points ? hist.points.slice(1) : [];
+  const wins = trades.filter((p) => p.net_pnl >= 0).length;
+  const losses = trades.length - wins;
+  return { wins, losses };
+}
+
 function renderStrategyGrid(elId, accountIds) {
   const root = el(elId);
   if (!root) return;
@@ -351,11 +367,16 @@ function renderStrategyGrid(elId, accountIds) {
     const a = accounts[id];
     const equity = a && a.initialized ? fmtMoney(a.equity) : "—";
     const pnl = a && a.initialized ? a.daily_realized_pnl : null;
+    const { wins, losses } = winLossCounts(id);
     return `<div class="strategy-card">
       <div class="head"><div class="ic">${meta.icon}</div><div class="name">${meta.label}</div><div class="tag">TESTE</div></div>
       <canvas id="spark-${id}" height="30"></canvas>
       <div class="body"><div><div class="lbl">Patrimônio</div><div class="v">${equity}</div></div>
       <div style="text-align:right"><div class="lbl">PnL dia</div><div class="v ${pnl >= 0 ? "up" : "down"}">${pnl === null ? "—" : fmtMoney(pnl)}</div></div></div>
+      <div class="body" style="margin-top:-4px">
+        <div><div class="lbl">Vitórias</div><div class="v up" style="font-size:12px">${wins}</div></div>
+        <div style="text-align:right"><div class="lbl">Perdas</div><div class="v down" style="font-size:12px">${losses}</div></div>
+      </div>
     </div>`;
   }).join("");
   accountIds.forEach((id) => renderSparkline(`spark-${id}`, id, ACCENT_COLORS[id]));
@@ -445,19 +466,29 @@ function renderLogFeed(elId, accountIds) {
   }).join("");
 }
 
-// -- timeline (Histórico) ---------------------------------------------------
+// -- timeline (Histórico) - grouped by strategy, not merged chronologically --
 function renderTimeline(elId, accountIds) {
   const root = el(elId);
   if (!root) return;
-  const entries = (cache.journal.entries || []).filter((e) => accountIds.includes(e.account)).slice(0, 12);
-  if (!entries.length) { root.innerHTML = `<div class="empty">Nenhum evento ainda</div>`; return; }
-  root.innerHTML = entries.map((e) => {
+  const entries = cache.journal.entries || [];
+  const groups = accountIds.map((id) => ({
+    id, label: ACCOUNTS[id].label, items: entries.filter((e) => e.account === id).slice(0, 5),
+  }));
+  if (!groups.some((g) => g.items.length)) { root.innerHTML = `<div class="empty">Nenhum evento ainda</div>`; return; }
+  root.innerHTML = groups.map((g) => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:10px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono';letter-spacing:.5px;margin-bottom:8px;text-transform:uppercase">${g.label}</div>
+      ${g.items.length ? renderTimelineItems(g.items) : `<div class="empty" style="padding:6px 0;text-align:left">Sem eventos ainda</div>`}
+    </div>`).join("");
+}
+function renderTimelineItems(entries) {
+  return entries.map((e) => {
     const isWin = e.net_pnl >= 0;
     return `<div class="timeline-item">
       <div class="tdot ${isWin ? "win" : "loss"}"></div>
       <div class="ttime">${fmtTime(e.closed_at)}</div>
       <div class="ttitle">${e.symbol} fechado (${e.exit_reason})</div>
-      <div class="tdesc ${isWin ? "up" : "down"}">${ACCOUNTS[e.account] ? ACCOUNTS[e.account].label : e.account} · ${e.side} · PnL ${fmtMoney(e.net_pnl)} · R ${e.r_multiple.toFixed(2)}</div>
+      <div class="tdesc ${isWin ? "up" : "down"}">${e.side} · PnL ${fmtMoney(e.net_pnl)} · R ${e.r_multiple.toFixed(2)}</div>
       ${e.reasons && e.reasons.length ? `<div class="treason">&#8618; ${escapeHtml(e.reasons.join("; "))}</div>` : ""}
     </div>`;
   }).join("");

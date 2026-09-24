@@ -1,7 +1,18 @@
-"""BingX Perpetual Swap REST client - signed account/trading endpoints only
-(Fase 16 - execution migration). Market data stays on Binance; this client
-exists purely so real orders can be placed on BingX from the same
-Shadow/Paper/Live pipeline everything else already uses.
+"""BingX Perpetual Swap REST client (Fase 16 - execution migration).
+
+Signed account/trading endpoints exist so real orders can be placed on
+BingX from the same Shadow/Paper/Live pipeline everything else already
+uses; Binance remains the data source for those (Shadow, core Momentum).
+The two public market-data methods (`get_24h_tickers`, `get_klines`) exist
+ONLY for the BingX Momentum scanner - found live that scanning Binance's
+ticker universe to trade on BingX produces real candidate/listing
+mismatches (BROCCOLI714USDT: ranked by Binance's scanner, does not exist
+on BingX at all), so BingX's own Momentum account scans and reads candles
+from BingX's own market, never Binance's, using the exact same
+`TickerStats`/`Kline` shapes and ranking logic Binance's scanner already
+uses - the response formats are close enough to identical that reusing
+those dataclasses' own parsers was correct, just with `source="bingx"`
+set explicitly afterward (their classmethods default to "binance").
 
 Two things make this client structurally different from
 `BinanceFuturesRestClient`, both discovered live (2026-09-24), not assumed
@@ -56,9 +67,22 @@ from aegis.providers.bingx.constants import (
     SOURCE_KEY_VALUE,
 )
 from aegis.providers.bingx.models import OrderResult, PositionRisk, SymbolRules
+from aegis.providers.binance.models import Kline, TickerStats
 from aegis.utils.backoff import BackoffPolicy
 
 _LOG = get_logger("bingx.rest")
+
+# BingX's kline endpoint returns only an open time per candle (see
+# get_klines' docstring) - close time is derived from this plus the
+# interval's real duration. "1M" has no fixed ms duration; approximated
+# as 30 days since this project never actually requests it (momentum runs
+# on 15m).
+_INTERVAL_MS = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000,
+    "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000,
+    "1w": 604_800_000, "1M": 2_592_000_000,
+}
 
 MAX_RETRIES = 4
 # BingX's own documented gateway codes for "retry later" conditions - a rate
@@ -293,6 +317,61 @@ class BingXFuturesRestClient:
             canonical = from_bingx_symbol(contract["symbol"])
             rules[canonical] = SymbolRules.from_contract_payload(canonical, contract)
         return rules
+
+    async def get_24h_tickers(self) -> list[TickerStats]:
+        """All BingX contracts' 24h rolling stats in one call - for the
+        BingX Momentum scanner ONLY (see module docstring for why it can't
+        reuse Binance's scan). BingX's response uses the exact same field
+        names Binance's does (`priceChangePercent`, `lastPrice`,
+        `quoteVolume`), so `TickerStats.from_rest_payload` is reused as-is;
+        `source` is corrected to "bingx" afterward since that classmethod
+        always defaults it to "binance", and the symbol is normalized back
+        to canonical form (BTC-USDT -> BTCUSDT) so the scanner's output is
+        directly comparable/usable the same way Binance's is."""
+        raw = await self._get(PUBLIC_ENDPOINTS["ticker_24hr"])
+        tickers = []
+        for row in raw:
+            ticker = TickerStats.from_rest_payload(row)
+            ticker.symbol = from_bingx_symbol(ticker.symbol)
+            ticker.source = "bingx"
+            tickers.append(ticker)
+        return tickers
+
+    async def get_klines(self, symbol: str, interval: str, limit: int = 500) -> list[Kline]:
+        """For the BingX Momentum scanner ONLY (see module docstring).
+
+        The reference doc describes the same positional-array row shape
+        Binance uses - NOT what the real endpoint returns. Verified live
+        2026-09-24: each row is an OBJECT `{open, high, low, close,
+        volume, time}` - no close time, quote volume, trade count, or
+        taker-buy fields at all, and rows come back NEWEST-FIRST
+        (Binance's convention, and the rest of this codebase's, is
+        oldest-first). `time` was confirmed live to be the OPEN time (it
+        fell inside the current, still-forming candle's window compared
+        against the server clock) - `close_time_ms` is derived from it
+        (open + interval duration - 1ms, Binance's own convention) since
+        BingX doesn't return one. The four fields BingX doesn't provide
+        (quote_volume, trades, taker_buy_*) are set to 0 - a real "not
+        available from this endpoint" value, not a fabricated one; the
+        Strategy Engine's signals here only ever read OHLCV."""
+        raw = await self._get(
+            PUBLIC_ENDPOINTS["klines"], params={"symbol": to_bingx_symbol(symbol), "interval": interval, "limit": limit},
+        )
+        now_ms = int(time.time() * 1000)
+        duration_ms = _INTERVAL_MS.get(interval, 60_000)
+        klines = []
+        for row in raw:
+            open_time_ms = int(row["time"])
+            close_time_ms = open_time_ms + duration_ms - 1
+            klines.append(Kline(
+                symbol=symbol, interval=interval, open_time_ms=open_time_ms, close_time_ms=close_time_ms,
+                open=float(row["open"]), high=float(row["high"]), low=float(row["low"]), close=float(row["close"]),
+                volume=float(row["volume"]), quote_volume=0.0, trades=0,
+                taker_buy_base_volume=0.0, taker_buy_quote_volume=0.0,
+                is_closed=close_time_ms < now_ms, source="bingx",
+            ))
+        klines.reverse()  # BingX returns newest-first; this codebase expects oldest-first throughout
+        return klines
 
     # -- signed reads --------------------------------------------------------
     async def get_account_balance(self) -> list[dict[str, Any]]:
