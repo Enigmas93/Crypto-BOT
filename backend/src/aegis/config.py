@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     bingx_api_secret: str = ""
     bingx_testnet: bool = True
 
+    # Credential encryption (Fase 17 - BingX demo/live account switching) --------
+    # Encrypts the BingX key/secret at rest (aegis.security.credential_crypto) so
+    # the dashboard can switch between demo and real trading without touching
+    # .env or restarting anything. See .env.example for how to generate one.
+    credential_encryption_key: str = ""
+
     # Notifications / Telegram (Fase 15b) ----------------------------------------
     # Optional - engines run identically without it, just silently skip
     # sending. Alerts only on things that need a human: Kill Switch

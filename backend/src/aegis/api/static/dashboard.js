@@ -7,20 +7,28 @@
  */
 
 // -- account/exchange metadata --------------------------------------------
+// Fase 17: BingX splits into _demo/_live variants per account (same API
+// key, different balance/mode - see aegis.execution.bingx_session). Both
+// are always tracked/shown (Overview, Positions, Risk & Logs); the
+// dedicated BINGX tab focuses on whichever mode is currently ACTIVE
+// (cache.bingxSettings.mode), so "trocar a chave/modo mostra a conta que
+// estiver ativa" without hiding the dormant mode's history elsewhere.
 const ACCOUNTS = {
   paper: { label: "Paper", icon: "P", exchange: null, kind: "paper" },
   shadow: { label: "Shadow", icon: "S", exchange: "binance", kind: "shadow" },
-  shadow_bingx: { label: "Shadow BingX", icon: "S", exchange: "bingx", kind: "shadow" },
+  shadow_bingx_demo: { label: "Shadow BingX (Demo)", icon: "S", exchange: "bingx", kind: "shadow" },
+  shadow_bingx_live: { label: "Shadow BingX (Real)", icon: "S", exchange: "bingx", kind: "shadow" },
   momentum: { label: "Momentum", icon: "M", exchange: "binance", kind: "momentum" },
-  momentum_bingx: { label: "Momentum BingX", icon: "M", exchange: "bingx", kind: "momentum" },
+  momentum_bingx_demo: { label: "Momentum BingX (Demo)", icon: "M", exchange: "bingx", kind: "momentum" },
+  momentum_bingx_live: { label: "Momentum BingX (Real)", icon: "M", exchange: "bingx", kind: "momentum" },
 };
 const EXCHANGE_ACCOUNTS = {
   binance: ["paper", "shadow", "momentum"],
-  bingx: ["paper", "shadow_bingx", "momentum_bingx"],
+  bingx: ["paper", "shadow_bingx_demo", "shadow_bingx_live", "momentum_bingx_demo", "momentum_bingx_live"],
 };
 const ACCENT_COLORS = {
-  paper: "#a78bfa", shadow: "#f0b90b", shadow_bingx: "#2b6bff",
-  momentum: "#f0b90b", momentum_bingx: "#2bffa3",
+  paper: "#a78bfa", shadow: "#f0b90b", shadow_bingx_demo: "#2b6bff", shadow_bingx_live: "#ff4d6a",
+  momentum: "#f0b90b", momentum_bingx_demo: "#2bffa3", momentum_bingx_live: "#ffc857",
 };
 
 // -- tiny helpers ------------------------------------------------------
@@ -112,6 +120,7 @@ let cache = {
   liquidations: { symbols: [] },
   killSwitchEvents: {}, // account_id -> events[]
   tradesByAccount: {}, // account_id -> trades[]
+  bingxSettings: { mode: "demo", credentials_configured: false, updated_at: null },
 };
 
 // -- tab / exchange switching --------------------------------------------
@@ -176,26 +185,34 @@ function renderAccountSummaryTable(tbodyId) {
 }
 
 // -- exchange view (binance/bingx tabs) -----------------------------------
+function activeBingxMode() {
+  return (cache.bingxSettings && cache.bingxSettings.mode) || "demo";
+}
+
 function renderExchangeView(exchange) {
   const accountIds = EXCHANGE_ACCOUNTS[exchange];
   const accounts = cache.overview.accounts || {};
-  const primaryAccountId = exchange === "binance" ? "shadow" : "shadow_bingx";
+  const primaryAccountId = exchange === "binance" ? "shadow" : `shadow_bingx_${activeBingxMode()}`;
   const primary = accounts[primaryAccountId];
 
   renderExchangeBanner(exchange, primary);
   // Rich single-account combo chart (equity line + per-trade PnL bars) for
   // the exchange's primary real-money-track account - matches the
   // Console Tático reference more closely than a flattened 3-line
-  // comparison would; the Overview tab still shows all 5 accounts together.
+  // comparison would; the Overview tab still shows all accounts together.
+  // For BingX this always follows whichever mode is currently ACTIVE - the
+  // dormant mode's own history is still fully visible via Overview/
+  // Positions/Risk & Logs (never hidden), just not the tab's headline chart.
   renderComboChart(`chart-${exchange}`, [primaryAccountId]);
   renderActivityList(`activity-${exchange}`, accountIds);
   renderStrategyGrid(`strategies-${exchange}`, accountIds);
-  const realAccounts = exchange === "binance" ? ["shadow", "momentum"] : ["shadow_bingx", "momentum_bingx"];
+  const realAccounts = exchange === "binance"
+    ? ["shadow", "momentum"]
+    : ["shadow_bingx_demo", "shadow_bingx_live", "momentum_bingx_demo", "momentum_bingx_live"];
   // showAccountColumn=true here even though this table only ever holds
-  // ONE exchange's positions - it still mixes Shadow and Momentum, and
-  // without this column there was no way to tell which strategy opened
-  // a given position (real gap - a screenshot showed two positions with
-  // no way to tell them apart).
+  // ONE exchange's positions - it still mixes Shadow and Momentum (and,
+  // for BingX, Demo and Real), and without this column there was no way to
+  // tell which strategy/mode opened a given position.
   renderPositionsTable(`positions-table-${exchange}`, realAccounts, true);
   renderRiskMonitor(`risk-${exchange}`, primaryAccountId);
   renderLogFeed(`feed-${exchange}`, accountIds);
@@ -205,8 +222,17 @@ function renderExchangeView(exchange) {
 function renderExchangeBanner(exchange, account) {
   const root = el(`banner-${exchange}`);
   if (!root) return;
-  const envLabel = exchange === "binance" ? "TESTNET" : "VST · TESTNET";
   const strip = root.querySelector(".kpi-strip-inline");
+  if (exchange === "bingx") {
+    const live = activeBingxMode() === "live";
+    root.querySelector(".pill-env").textContent = live ? "REAL · DINHEIRO DE VERDADE" : "DEMO · VST";
+    root.querySelector(".pill-env").style.color = live ? "var(--red)" : "";
+    root.querySelector(".pill-env").style.borderColor = live ? "var(--red)" : "";
+    const sub = el("bingx-banner-sub");
+    if (sub) sub.textContent = live ? "Operando com fundos reais na BingX" : "Ambiente de simulação (VST)";
+  } else {
+    root.querySelector(".pill-env").textContent = "TESTNET";
+  }
   if (!account || !account.initialized) {
     strip.innerHTML = `<div class="kpi-tile"><div class="lbl">Status</div><div class="val">Não inicializada</div></div>`;
     return;
@@ -222,7 +248,6 @@ function renderExchangeBanner(exchange, account) {
     <div class="kpi-tile"><div class="lbl">Perdas seguidas</div><div class="val">${account.consecutive_losses}</div></div>
     <div class="kpi-tile ${risky ? "" : ""}"><div class="lbl">Risco</div><div class="val ${risky ? "down" : "up"}">${risky ? "ATENÇÃO" : "NORMAL"}</div></div>
   `;
-  root.querySelector(".pill-env").textContent = envLabel;
 }
 
 // -- combo chart: equity (line) + daily pnl (bars) + drawdown (dashed) -----
@@ -369,7 +394,7 @@ function renderStrategyGrid(elId, accountIds) {
     const pnl = a && a.initialized ? a.daily_realized_pnl : null;
     const { wins, losses } = winLossCounts(id);
     return `<div class="strategy-card">
-      <div class="head"><div class="ic">${meta.icon}</div><div class="name">${meta.label}</div><div class="tag">TESTE</div></div>
+      <div class="head"><div class="ic">${meta.icon}</div><div class="name">${meta.label}</div><div class="tag" ${id.endsWith("_live") ? 'style="color:var(--red);border-color:var(--red)"' : ""}>${id.endsWith("_live") ? "REAL" : "TESTE"}</div></div>
       <canvas id="spark-${id}" height="30"></canvas>
       <div class="body"><div><div class="lbl">Patrimônio</div><div class="v">${equity}</div></div>
       <div style="text-align:right"><div class="lbl">PnL dia</div><div class="v ${pnl >= 0 ? "up" : "down"}">${pnl === null ? "—" : fmtMoney(pnl)}</div></div></div>
@@ -664,6 +689,97 @@ function renderMarketIntelligence() {
   }
 }
 
+// -- BingX account settings (Fase 17 - demo/live switch) --------------------
+const BINGX_LIVE_CONFIRM_PHRASE = "ATIVAR CONTA REAL";
+
+function toggleBingxSettings() {
+  const panel = el("bingx-settings-panel");
+  if (!panel) return;
+  panel.style.display = panel.style.display === "none" ? "" : "none";
+  if (panel.style.display !== "none") renderBingxSettingsPanel();
+}
+
+function renderBingxSettingsPanel() {
+  const s = cache.bingxSettings;
+  const credsEl = el("bingx-creds-status");
+  if (credsEl) {
+    credsEl.innerHTML = s.credentials_configured
+      ? `<span class="pill ok">CONFIGURADA</span>`
+      : `<span class="pill warn">NÃO CONFIGURADA</span>`;
+  }
+  const modeEl = el("bingx-current-mode");
+  if (modeEl) {
+    modeEl.innerHTML = s.mode === "live"
+      ? `<span class="pill crit">REAL — DINHEIRO DE VERDADE</span>`
+      : `<span class="pill ok">DEMO (VST)</span>`;
+  }
+  const demoBtn = el("bingx-mode-demo-btn");
+  const liveBtn = el("bingx-mode-live-btn");
+  if (demoBtn) demoBtn.classList.toggle("active", s.mode === "demo");
+  if (liveBtn) liveBtn.classList.toggle("active", s.mode === "live");
+}
+
+window.toggleBingxSettings = toggleBingxSettings;
+
+window.saveBingxCredentials = async function () {
+  const apiKey = el("bingx-api-key-input").value.trim();
+  const apiSecret = el("bingx-api-secret-input").value.trim();
+  const status = el("bingx-save-status");
+  if (!apiKey || !apiSecret) { status.textContent = "Preencha os dois campos."; status.className = "settings-status down"; return; }
+  status.textContent = "Validando na BingX...";
+  status.className = "settings-status";
+  try {
+    const r = await fetch("/api/settings/bingx/credentials", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { status.textContent = body.detail || `Falha (HTTP ${r.status})`; status.className = "settings-status down"; return; }
+    status.textContent = "Chave salva com sucesso.";
+    status.className = "settings-status up";
+    el("bingx-api-key-input").value = "";
+    el("bingx-api-secret-input").value = "";
+    cache.bingxSettings = await getJSON("/api/settings/bingx");
+    renderBingxSettingsPanel();
+  } catch (e) {
+    status.textContent = `Erro: ${e.message}`;
+    status.className = "settings-status down";
+  }
+};
+
+window.switchBingxMode = async function (mode) {
+  const status = el("bingx-mode-status");
+  const current = cache.bingxSettings.mode;
+  if (mode === current) return;
+  let confirm_ = undefined;
+  if (mode === "live") {
+    confirm_ = prompt(
+      `Isto ativa a conta REAL da BingX — o sistema passa a operar com dinheiro de verdade.\n` +
+      `Digite exatamente "${BINGX_LIVE_CONFIRM_PHRASE}" para confirmar:`
+    );
+    if (confirm_ === null) return; // cancelled
+  }
+  status.textContent = "Trocando...";
+  status.className = "settings-status";
+  try {
+    const r = await fetch("/api/settings/bingx/mode", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, confirm: confirm_ }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { status.textContent = body.detail || `Falha (HTTP ${r.status})`; status.className = "settings-status down"; return; }
+    status.textContent = `Modo alterado para ${mode === "live" ? "REAL" : "DEMO"}.`;
+    status.className = "settings-status up";
+    cache.bingxSettings = await getJSON("/api/settings/bingx");
+    renderBingxSettingsPanel();
+    await refreshData();
+    renderAll();
+  } catch (e) {
+    status.textContent = `Erro: ${e.message}`;
+    status.className = "settings-status down";
+  }
+};
+
 // -- kill switch reset -----------------------------------------------------
 window.resetKillSwitch = async function (accountId) {
   const note = prompt(`Motivo do reset do Kill Switch para "${accountId}" (obrigatório):`);
@@ -686,6 +802,7 @@ function renderAll() {
   renderOverviewTab();
   renderExchangeView("binance");
   renderExchangeView("bingx");
+  renderBingxSettingsPanel();
   renderStrategiesTab();
   renderPositionsTab();
   renderOrdersTab();
@@ -695,7 +812,7 @@ function renderAll() {
 // -- data refresh --------------------------------------------------------
 async function refreshData() {
   const accountIds = Object.keys(ACCOUNTS);
-  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, health, macro, derivatives, liquidations] = await Promise.all([
+  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, health, macro, derivatives, liquidations, bingxSettings] = await Promise.all([
     getJSON("/api/overview"),
     getJSON("/api/positions"),
     getJSON("/api/journal?limit=50"),
@@ -708,6 +825,7 @@ async function refreshData() {
     getJSON("/api/market/macro"),
     getJSON("/api/market/derivatives"),
     getJSON("/api/market/liquidations"),
+    getJSON("/api/settings/bingx").catch(() => cache.bingxSettings),
   ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
@@ -726,7 +844,7 @@ async function refreshData() {
   cache = {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, health,
-    macro, derivatives, liquidations, killSwitchEvents,
+    macro, derivatives, liquidations, killSwitchEvents, bingxSettings,
     tradesByAccount: cache.tradesByAccount,
   };
 }

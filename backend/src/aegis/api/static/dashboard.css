@@ -277,3 +277,16 @@ tbody tr.clickable:hover { cursor: pointer; }
 .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .chip { border: 1px solid var(--border); background: var(--panel-2); color: var(--text-dim); font-size: 10.5px; font-weight: 700; padding: 5px 11px; cursor: pointer; font-family: 'JetBrains Mono'; }
 .chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.chip.live { border-color: var(--red); }
+.chip.live.active { background: var(--red-soft); color: var(--red); border-color: var(--red); }
+
+/* -- BingX account settings (Fase 17) ------------------------------------- */
+.settings-form input[type="password"], .settings-form input[type="text"] {
+  width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); font-family: 'JetBrains Mono'; font-size: 12px; padding: 8px 10px; margin-bottom: 8px; border-radius: var(--radius);
+}
+.settings-form input:focus { outline: none; border-color: var(--accent); }
+.settings-note { font-size: 10.5px; color: var(--text-faint); margin: 6px 0 10px; line-height: 1.5; }
+.settings-status { font-size: 11px; margin-left: 10px; font-family: 'JetBrains Mono'; }
+.settings-status.up { color: var(--green); }
+.settings-status.down { color: var(--red); }

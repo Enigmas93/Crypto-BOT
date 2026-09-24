@@ -90,9 +90,37 @@
     <div class="view active" id="view-bingx">
       <div class="panel exchange-banner" id="banner-bingx" style="margin-bottom:14px">
         <div class="ex-icon bingx">X</div>
-        <div class="ex-info"><div style="display:flex;align-items:center;gap:10px"><h2>BINGX</h2><span class="pill-env">VST · TESTNET</span></div><p>Ambiente de simulação (VST)</p></div>
+        <div class="ex-info"><div style="display:flex;align-items:center;gap:10px"><h2>BINGX</h2><span class="pill-env" id="bingx-mode-pill">DEMO · VST</span></div><p id="bingx-banner-sub">Ambiente de simulação (VST)</p></div>
         <div class="kpi-strip-inline" style="display:flex;gap:14px;margin-left:auto;flex-wrap:wrap"></div>
+        <button class="icon-btn" style="width:auto;padding:6px 12px;margin-left:10px" onclick="toggleBingxSettings()">&#9881; Configurações</button>
       </div>
+
+      <div class="grid full" id="bingx-settings-panel" style="display:none">
+        <div class="card settings-form">
+          <h2>Conta BingX — chave e modo</h2>
+          <p class="settings-note">
+            A BingX usa <b>uma única chave de API</b> para as contas demo (VST) e real — não há duas chaves
+            separadas. O que muda entre elas é o modo abaixo. Trocar de modo fica bloqueado enquanto houver
+            posições abertas no modo atual, e ativar o modo <b>REAL</b> exige confirmação explícita porque
+            passa a operar com dinheiro de verdade.
+          </p>
+          <div class="risk-row"><span class="rl">Chave configurada</span><span class="rv" id="bingx-creds-status">—</span></div>
+          <div class="risk-row" style="margin-bottom:10px"><span class="rl">Modo atual</span><span class="rv" id="bingx-current-mode">—</span></div>
+
+          <input type="password" id="bingx-api-key-input" placeholder="API Key da BingX" autocomplete="off">
+          <input type="password" id="bingx-api-secret-input" placeholder="API Secret da BingX" autocomplete="off">
+          <button class="icon-btn" style="width:auto;padding:7px 16px" onclick="saveBingxCredentials()">Salvar chave</button>
+          <span class="settings-status" id="bingx-save-status"></span>
+
+          <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="rl" style="margin-right:4px">Modo:</span>
+            <span class="chip" id="bingx-mode-demo-btn" onclick="switchBingxMode('demo')">DEMO (VST)</span>
+            <span class="chip live" id="bingx-mode-live-btn" onclick="switchBingxMode('live')">REAL (dinheiro de verdade)</span>
+            <span class="settings-status" id="bingx-mode-status"></span>
+          </div>
+        </div>
+      </div>
+
       <div class="grid g2">
         <div class="card"><h2>Performance
             <span class="chart-tabs"><button data-range="1D">1D</button><button data-range="7D" class="active">7D</button><button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">TODOS</button></span>
@@ -124,7 +152,7 @@
     <!-- ============ POSITIONS ============ -->
     <div class="view" id="view-positions">
       <div class="card"><h2>Todas as posições abertas</h2>
-        <div class="subtitle">Consolidado de todas as contas — Paper, Shadow, Shadow BingX, Momentum, Momentum BingX</div>
+        <div class="subtitle">Consolidado de todas as contas — Paper, Shadow, Shadow BingX (Demo/Real), Momentum, Momentum BingX (Demo/Real)</div>
         <div class="table-scroll"><table><thead><tr><th>Estratégia</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th><th>Mark</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
           <tbody id="positions-table-all"></tbody></table></div>
       </div>
@@ -139,9 +167,11 @@
           <span class="chip active" data-account="all" onclick="setOrdersFilter('all')">TODAS</span>
           <span class="chip" data-account="paper" onclick="setOrdersFilter('paper')">PAPER</span>
           <span class="chip" data-account="shadow" onclick="setOrdersFilter('shadow')">SHADOW</span>
-          <span class="chip" data-account="shadow_bingx" onclick="setOrdersFilter('shadow_bingx')">SHADOW BINGX</span>
+          <span class="chip" data-account="shadow_bingx_demo" onclick="setOrdersFilter('shadow_bingx_demo')">SHADOW BINGX (DEMO)</span>
+          <span class="chip" data-account="shadow_bingx_live" onclick="setOrdersFilter('shadow_bingx_live')">SHADOW BINGX (REAL)</span>
           <span class="chip" data-account="momentum" onclick="setOrdersFilter('momentum')">MOMENTUM</span>
-          <span class="chip" data-account="momentum_bingx" onclick="setOrdersFilter('momentum_bingx')">MOMENTUM BINGX</span>
+          <span class="chip" data-account="momentum_bingx_demo" onclick="setOrdersFilter('momentum_bingx_demo')">MOMENTUM BINGX (DEMO)</span>
+          <span class="chip" data-account="momentum_bingx_live" onclick="setOrdersFilter('momentum_bingx_live')">MOMENTUM BINGX (REAL)</span>
         </div>
         <div class="table-scroll"><table><thead><tr><th>Estratégia</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>Fechado em</th></tr></thead>
           <tbody id="orders-table"></tbody></table></div>

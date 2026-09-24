@@ -3,14 +3,14 @@ TimescaleDB. Skipped automatically if the database is unreachable (see
 conftest.py).
 
 Unlike other repositories, the tracked accounts ("paper", "shadow",
-"shadow_bingx", "momentum", "momentum_bingx") are fixed by design - the
-dashboard has exactly five real accounts, not an arbitrary set a test can
-spin up under a random unique id the way risk/kill-switch/paper/shadow/
-momentum repository tests do. These
-tests therefore assert response SHAPE and status codes rather than exact
-values (the real account state changes as other work in this session
-runs), and only exercise write-path validation (bad input, not-currently-
-triggered) that never mutates real account state.
+"shadow_bingx_demo", "shadow_bingx_live", "momentum", "momentum_bingx_demo",
+"momentum_bingx_live") are fixed by design - the dashboard has exactly
+seven real accounts, not an arbitrary set a test can spin up under a
+random unique id the way risk/kill-switch/paper/shadow/momentum repository
+tests do. These tests therefore assert response SHAPE and status codes
+rather than exact values (the real account state changes as other work in
+this session runs), and only exercise write-path validation (bad input,
+not-currently-triggered) that never mutates real account state.
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ import pytest
 
 from aegis.api.app import create_app
 from aegis.config import get_settings
-from aegis.providers.bingx.rest_client import BingXFuturesRestClient
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
 
@@ -31,14 +30,13 @@ async def client(pool):
     app.state.settings = settings
     # Not exercised via the real lifespan here (ASGITransport doesn't run
     # it) - same manual wiring as pool/settings above. Credentials may be
-    # empty in this environment; every call on these clients already
+    # empty in this environment; every call on this client already
     # degrades to "no live enrichment" rather than raising (see
-    # routes._enrich_with_live_state), so this is safe either way.
+    # routes._enrich_with_live_state), so this is safe either way. BingX's
+    # REST clients are built per-request from the database (Fase 17), not
+    # app.state, so nothing to wire here for them.
     app.state.binance_rest = BinanceFuturesRestClient(
         testnet=settings.binance_testnet, api_key=settings.binance_api_key, api_secret=settings.binance_api_secret,
-    )
-    app.state.bingx_rest = BingXFuturesRestClient(
-        testnet=settings.bingx_testnet, api_key=settings.bingx_api_key, api_secret=settings.bingx_api_secret,
     )
     transport = httpx.ASGITransport(app=app)
     try:
@@ -46,15 +44,17 @@ async def client(pool):
             yield c
     finally:
         await app.state.binance_rest.aclose()
-        await app.state.bingx_rest.aclose()
 
 
 @pytest.mark.asyncio
-async def test_overview_returns_both_tracked_accounts(client):
+async def test_overview_returns_every_tracked_account(client):
     resp = await client.get("/api/overview")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body["accounts"].keys()) == {"paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx"}
+    assert set(body["accounts"].keys()) == {
+        "paper", "shadow", "shadow_bingx_demo", "shadow_bingx_live",
+        "momentum", "momentum_bingx_demo", "momentum_bingx_live",
+    }
     for account in body["accounts"].values():
         assert "initialized" in account
 
@@ -64,20 +64,21 @@ async def test_positions_returns_paper_shadow_and_momentum_lists(client):
     resp = await client.get("/api/positions")
     assert resp.status_code == 200
     body = resp.json()
+    bingx_accounts = ["shadow_bingx_demo", "shadow_bingx_live", "momentum_bingx_demo", "momentum_bingx_live"]
     assert isinstance(body["paper"], list)
     assert isinstance(body["shadow"], list)
-    assert isinstance(body["shadow_bingx"], list)
     assert isinstance(body["momentum"], list)
-    assert isinstance(body["momentum_bingx"], list)
+    for account in bingx_accounts:
+        assert isinstance(body[account], list)
     # Momentum has no fixed take_profit_price - it exits via trailing stop
-    for position in body["momentum"] + body["momentum_bingx"]:
+    for position in body["momentum"] + body["momentum_bingx_demo"] + body["momentum_bingx_live"]:
         assert "take_profit_price" not in position
         assert "momentum_score" in position
     # Every real-exchange account's positions carry live enrichment fields
     # (never for "paper", which has no real exchange position to check) -
     # mirror_ok is None only if the live exchange call itself failed, not
     # simply because a position is well-mirrored or not.
-    for position in body["shadow"] + body["shadow_bingx"] + body["momentum"] + body["momentum_bingx"]:
+    for position in body["shadow"] + body["momentum"] + sum((body[a] for a in bingx_accounts), []):
         assert "mark_price" in position
         assert "unrealized_pnl" in position
         assert "mirror_ok" in position
@@ -145,11 +146,21 @@ async def test_trades_returns_a_list_for_paper(client):
 
 
 @pytest.mark.asyncio
-async def test_trades_returns_a_list_for_shadow_bingx(client):
-    resp = await client.get("/api/trades", params={"account": "shadow_bingx", "limit": 5})
+async def test_trades_returns_a_list_for_shadow_bingx_demo(client):
+    resp = await client.get("/api/trades", params={"account": "shadow_bingx_demo", "limit": 5})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["account"] == "shadow_bingx"
+    assert body["account"] == "shadow_bingx_demo"
+    assert isinstance(body["trades"], list)
+    assert len(body["trades"]) <= 5
+
+
+@pytest.mark.asyncio
+async def test_trades_returns_a_list_for_shadow_bingx_live(client):
+    resp = await client.get("/api/trades", params={"account": "shadow_bingx_live", "limit": 5})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account"] == "shadow_bingx_live"
     assert isinstance(body["trades"], list)
     assert len(body["trades"]) <= 5
 
@@ -165,11 +176,20 @@ async def test_trades_returns_a_list_for_momentum(client):
 
 
 @pytest.mark.asyncio
-async def test_trades_returns_a_list_for_momentum_bingx(client):
-    resp = await client.get("/api/trades", params={"account": "momentum_bingx", "limit": 5})
+async def test_trades_returns_a_list_for_momentum_bingx_demo(client):
+    resp = await client.get("/api/trades", params={"account": "momentum_bingx_demo", "limit": 5})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["account"] == "momentum_bingx"
+    assert body["account"] == "momentum_bingx_demo"
+    assert isinstance(body["trades"], list)
+
+
+@pytest.mark.asyncio
+async def test_trades_returns_a_list_for_momentum_bingx_live(client):
+    resp = await client.get("/api/trades", params={"account": "momentum_bingx_live", "limit": 5})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account"] == "momentum_bingx_live"
     assert isinstance(body["trades"], list)
 
 
@@ -202,7 +222,10 @@ async def test_journal_merges_all_tracked_accounts_sorted_by_closed_at(client):
     assert isinstance(entries, list)
     assert len(entries) <= 10
     for entry in entries:
-        assert entry["account"] in ("paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx")
+        assert entry["account"] in (
+            "paper", "shadow", "shadow_bingx_demo", "shadow_bingx_live",
+            "momentum", "momentum_bingx_demo", "momentum_bingx_live",
+        )
         assert "symbol" in entry
         assert "net_pnl" in entry
     # newest first
@@ -304,3 +327,54 @@ async def test_kill_switch_reset_conflicts_when_not_currently_triggered(client):
         pytest.skip("paper account's kill switch is genuinely triggered right now - not safe to probe reset here")
     resp = await client.post("/api/kill-switch/paper/reset", json={"note": "api test - should not apply"})
     assert resp.status_code == 409
+
+
+# -- BingX account settings (Fase 17) ------------------------------------------
+@pytest.mark.asyncio
+async def test_get_bingx_settings_returns_mode_and_configured_flag(client):
+    resp = await client.get("/api/settings/bingx")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] in ("demo", "live")
+    assert isinstance(body["credentials_configured"], bool)
+
+
+@pytest.mark.asyncio
+async def test_save_bingx_credentials_rejects_blank_key(client):
+    resp = await client.post("/api/settings/bingx/credentials", json={"api_key": "  ", "api_secret": "x"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_save_bingx_credentials_rejects_a_bad_key(client):
+    # A syntactically-present but wrong key must fail BingX's own signature
+    # check (400), never silently "succeed" and get persisted - this is the
+    # one write endpoint here that talks to a real external exchange before
+    # touching the database.
+    resp = await client.post(
+        "/api/settings/bingx/credentials", json={"api_key": "not-a-real-key", "api_secret": "not-a-real-secret"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_bingx_mode_rejects_an_unknown_mode(client):
+    resp = await client.post("/api/settings/bingx/mode", json={"mode": "yolo"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_bingx_mode_to_live_requires_confirmation_phrase(client):
+    current = (await client.get("/api/settings/bingx")).json()
+    if current["mode"] == "live":
+        pytest.skip("already in live mode in this environment - not safe to probe the confirmation path here")
+    resp = await client.post("/api/settings/bingx/mode", json={"mode": "live", "confirm": "nope"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_bingx_mode_to_same_mode_is_a_no_op(client):
+    current = (await client.get("/api/settings/bingx")).json()
+    resp = await client.post("/api/settings/bingx/mode", json={"mode": current["mode"]})
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == current["mode"]

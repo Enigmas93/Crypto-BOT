@@ -83,4 +83,7 @@ async def test_a_second_pass_the_same_day_does_not_reset_again():
 def test_every_tracked_account_is_a_real_dashboard_account():
     # Regression: a typo here would silently stop resetting an account's
     # daily PnL forever, exactly like the original bug.
-    assert set(run_daily_reset._ACCOUNTS) == {"paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx"}
+    assert set(run_daily_reset._ACCOUNTS) == {
+        "paper", "shadow", "shadow_bingx_demo", "shadow_bingx_live",
+        "momentum", "momentum_bingx_demo", "momentum_bingx_live",
+    }

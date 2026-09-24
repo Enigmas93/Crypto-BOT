@@ -9,6 +9,7 @@ from fastapi import Request
 
 from aegis.config import Settings
 from aegis.db.backtest_repository import BacktestRepository
+from aegis.db.bingx_account_repository import BingxAccountRepository
 from aegis.db.candle_repository import CandleRepository
 from aegis.db.derivatives_repository import DerivativesRepository
 from aegis.db.kill_switch_repository import KillSwitchRepository
@@ -20,7 +21,6 @@ from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
 from aegis.db.shadow_repository import ShadowRepository
-from aegis.providers.bingx.rest_client import BingXFuturesRestClient
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
 
@@ -68,8 +68,11 @@ def get_binance_rest(request: Request) -> BinanceFuturesRestClient:
     return request.app.state.binance_rest
 
 
-def get_bingx_rest(request: Request) -> BingXFuturesRestClient:
-    return request.app.state.bingx_rest
+def get_bingx_account_repo(request: Request) -> BingxAccountRepository:
+    """Fase 17: the BingX key/secret + demo/live mode live in the database,
+    managed from the dashboard - not a long-lived app.state client built
+    once from .env, since that would never notice a mode switch."""
+    return BingxAccountRepository(request.app.state.pool, request.app.state.settings.credential_encryption_key)
 
 
 def get_derivatives_repo(request: Request) -> DerivativesRepository:

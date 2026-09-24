@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from aegis.api.dependencies import (
     get_backtest_repo,
-    get_bingx_rest,
+    get_bingx_account_repo,
     get_binance_rest,
     get_candle_repo,
     get_derivatives_repo,
@@ -34,6 +34,7 @@ from aegis.api.dependencies import (
 )
 from aegis.config import Settings
 from aegis.db.backtest_repository import BacktestRepository
+from aegis.db.bingx_account_repository import BingxAccountRepository
 from aegis.db.candle_repository import CandleRepository
 from aegis.db.derivatives_repository import DerivativesRepository
 from aegis.db.events_repository import EventsRepository
@@ -51,7 +52,14 @@ from aegis.risk.rules import compute_drawdown_pct
 
 router = APIRouter()
 
-_TRACKED_ACCOUNTS = ("paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx")
+# Fase 17: shadow_bingx/momentum_bingx split into _demo/_live variants - see
+# migration 0018 and aegis.execution.bingx_session for why (same BingX key,
+# but demo and real balances are different exchange-side accounts, so their
+# trade history/risk state must never mix).
+_TRACKED_ACCOUNTS = (
+    "paper", "shadow", "shadow_bingx_demo", "shadow_bingx_live",
+    "momentum", "momentum_bingx_demo", "momentum_bingx_live",
+)
 _TRADING_INTERVAL = "1h"  # the interval Paper/Shadow Trading actually act on (Phase 9/10)
 
 
@@ -111,6 +119,21 @@ async def _enrich_with_live_state(
             position["unrealized_pnl"] = live[0].unrealized_pnl
 
 
+async def _bingx_rest_clients(bingx_account_repo: BingxAccountRepository) -> tuple[
+    BingXFuturesRestClient, BingXFuturesRestClient,
+]:
+    """Fase 17: BingX uses ONE key for both demo (VST) and live balances, so
+    both can always be read back regardless of which mode is currently
+    "active" for trading - built fresh per request (not app.state) so a key
+    saved/rotated from Configurações is reflected immediately. Callers must
+    aclose() both when done."""
+    credentials = await bingx_account_repo.get_decrypted_credentials()
+    api_key, api_secret = credentials if credentials is not None else ("", "")
+    demo = BingXFuturesRestClient(testnet=True, api_key=api_key, api_secret=api_secret)
+    live = BingXFuturesRestClient(testnet=False, api_key=api_key, api_secret=api_secret)
+    return demo, live
+
+
 @router.get("/positions")
 async def get_positions(
     settings: Settings = Depends(get_settings_dep),
@@ -118,10 +141,11 @@ async def get_positions(
     shadow_repo: ShadowRepository = Depends(get_shadow_repo),
     momentum_repo: MomentumRepository = Depends(get_momentum_repo),
     binance_rest: BinanceFuturesRestClient = Depends(get_binance_rest),
-    bingx_rest: BingXFuturesRestClient = Depends(get_bingx_rest),
+    bingx_account_repo: BingxAccountRepository = Depends(get_bingx_account_repo),
 ) -> dict:
     positions: dict[str, list[dict]] = {
-        "paper": [], "shadow": [], "shadow_bingx": [], "momentum": [], "momentum_bingx": [],
+        "paper": [], "shadow": [], "shadow_bingx_demo": [], "shadow_bingx_live": [],
+        "momentum": [], "momentum_bingx_demo": [], "momentum_bingx_live": [],
     }
     for symbol in settings.symbols:
         paper_position = await paper_repo.get_open_position("paper", symbol)
@@ -140,17 +164,18 @@ async def get_positions(
                                          "stop_price": shadow_position.stop_price,
                                          "take_profit_price": shadow_position.take_profit_price,
                                          "entry_time": shadow_position.entry_time})
-        # BingX Shadow Trading (Fase 16) - same engine/table shape as
-        # Binance's "shadow" account, just a different account_id and a
-        # real order placed on a different exchange.
-        shadow_bingx_position = await shadow_repo.get_open_position("shadow_bingx", symbol)
-        if shadow_bingx_position is not None:
-            positions["shadow_bingx"].append({"symbol": symbol, "side": shadow_bingx_position.side,
-                                               "entry_price": shadow_bingx_position.entry_price,
-                                               "quantity": shadow_bingx_position.quantity,
-                                               "stop_price": shadow_bingx_position.stop_price,
-                                               "take_profit_price": shadow_bingx_position.take_profit_price,
-                                               "entry_time": shadow_bingx_position.entry_time})
+        # BingX Shadow Trading (Fase 16/17) - same engine/table shape as
+        # Binance's "shadow" account, just a different account_id per mode
+        # and a real order placed on a different exchange.
+        for account_id in ("shadow_bingx_demo", "shadow_bingx_live"):
+            bingx_position = await shadow_repo.get_open_position(account_id, symbol)
+            if bingx_position is not None:
+                positions[account_id].append({"symbol": symbol, "side": bingx_position.side,
+                                               "entry_price": bingx_position.entry_price,
+                                               "quantity": bingx_position.quantity,
+                                               "stop_price": bingx_position.stop_price,
+                                               "take_profit_price": bingx_position.take_profit_price,
+                                               "entry_time": bingx_position.entry_time})
     # Momentum's symbol universe is the Scanner's dynamic top-N, not the
     # fixed settings.symbols list - an open position can be in a symbol
     # never seen by any other engine (e.g. MUBARAKUSDT), so it must be
@@ -166,26 +191,34 @@ async def get_positions(
                                            "stop_price": momentum_position.stop_price,
                                            "momentum_score": momentum_position.momentum_score,
                                            "entry_time": momentum_position.entry_time})
-    # BingX Momentum Engine (Fase 16) - same dynamic-universe caveat as
-    # Binance's "momentum" account above.
-    for symbol in await momentum_repo.get_open_symbols("momentum_bingx"):
-        momentum_bingx_position = await momentum_repo.get_open_position("momentum_bingx", symbol)
-        if momentum_bingx_position is not None:
-            positions["momentum_bingx"].append({"symbol": symbol, "side": momentum_bingx_position.side,
-                                                 "entry_price": momentum_bingx_position.entry_price,
-                                                 "quantity": momentum_bingx_position.quantity,
-                                                 "stop_price": momentum_bingx_position.stop_price,
-                                                 "momentum_score": momentum_bingx_position.momentum_score,
-                                                 "entry_time": momentum_bingx_position.entry_time})
+    # BingX Momentum Engine (Fase 16/17) - same dynamic-universe caveat as
+    # Binance's "momentum" account above, once per mode.
+    for account_id in ("momentum_bingx_demo", "momentum_bingx_live"):
+        for symbol in await momentum_repo.get_open_symbols(account_id):
+            bingx_momentum_position = await momentum_repo.get_open_position(account_id, symbol)
+            if bingx_momentum_position is not None:
+                positions[account_id].append({"symbol": symbol, "side": bingx_momentum_position.side,
+                                               "entry_price": bingx_momentum_position.entry_price,
+                                               "quantity": bingx_momentum_position.quantity,
+                                               "stop_price": bingx_momentum_position.stop_price,
+                                               "momentum_score": bingx_momentum_position.momentum_score,
+                                               "entry_time": bingx_momentum_position.entry_time})
 
     # Live exchange-side enrichment (mark price, unrealized PnL, and
     # whether the exchange still agrees a position is actually open) -
     # "paper" is a local simulation with no real exchange position to
     # check, so it's intentionally left out here.
-    await _enrich_with_live_state(positions["shadow"], binance_rest)
-    await _enrich_with_live_state(positions["momentum"], binance_rest)
-    await _enrich_with_live_state(positions["shadow_bingx"], bingx_rest)
-    await _enrich_with_live_state(positions["momentum_bingx"], bingx_rest)
+    bingx_demo_rest, bingx_live_rest = await _bingx_rest_clients(bingx_account_repo)
+    try:
+        await _enrich_with_live_state(positions["shadow"], binance_rest)
+        await _enrich_with_live_state(positions["momentum"], binance_rest)
+        await _enrich_with_live_state(positions["shadow_bingx_demo"], bingx_demo_rest)
+        await _enrich_with_live_state(positions["shadow_bingx_live"], bingx_live_rest)
+        await _enrich_with_live_state(positions["momentum_bingx_demo"], bingx_demo_rest)
+        await _enrich_with_live_state(positions["momentum_bingx_live"], bingx_live_rest)
+    finally:
+        await bingx_demo_rest.aclose()
+        await bingx_live_rest.aclose()
     return positions
 
 
@@ -221,15 +254,16 @@ async def _fetch_trades_for_account(
         return await paper_repo.fetch_trades("paper", limit=limit)
     if account == "shadow":
         return await shadow_repo.fetch_trades("shadow", limit=limit)
-    if account == "shadow_bingx":
-        return await shadow_repo.fetch_trades("shadow_bingx", limit=limit)
+    if account in ("shadow_bingx_demo", "shadow_bingx_live"):
+        return await shadow_repo.fetch_trades(account, limit=limit)
     if account == "momentum":
         return await momentum_repo.fetch_trades("momentum", limit=limit)
-    if account == "momentum_bingx":
-        return await momentum_repo.fetch_trades("momentum_bingx", limit=limit)
+    if account in ("momentum_bingx_demo", "momentum_bingx_live"):
+        return await momentum_repo.fetch_trades(account, limit=limit)
     raise HTTPException(
         status_code=400,
-        detail="account must be 'paper', 'shadow', 'shadow_bingx', 'momentum' or 'momentum_bingx'",
+        detail="account must be 'paper', 'shadow', 'shadow_bingx_demo', 'shadow_bingx_live', "
+                "'momentum', 'momentum_bingx_demo' or 'momentum_bingx_live'",
     )
 
 
@@ -288,19 +322,25 @@ async def get_journal(
     trades on its own (cheap - these tables are still small) so merging
     never has to worry about one account's older trades getting starved out
     by another's more active one before the final sort/truncate."""
-    paper, shadow, shadow_bingx, momentum, momentum_bingx = await asyncio.gather(
-        paper_repo.fetch_trades("paper", limit=limit),
-        shadow_repo.fetch_trades("shadow", limit=limit),
-        shadow_repo.fetch_trades("shadow_bingx", limit=limit),
-        momentum_repo.fetch_trades("momentum", limit=limit),
-        momentum_repo.fetch_trades("momentum_bingx", limit=limit),
+    paper, shadow, shadow_bingx_demo, shadow_bingx_live, momentum, momentum_bingx_demo, momentum_bingx_live = (
+        await asyncio.gather(
+            paper_repo.fetch_trades("paper", limit=limit),
+            shadow_repo.fetch_trades("shadow", limit=limit),
+            shadow_repo.fetch_trades("shadow_bingx_demo", limit=limit),
+            shadow_repo.fetch_trades("shadow_bingx_live", limit=limit),
+            momentum_repo.fetch_trades("momentum", limit=limit),
+            momentum_repo.fetch_trades("momentum_bingx_demo", limit=limit),
+            momentum_repo.fetch_trades("momentum_bingx_live", limit=limit),
+        )
     )
     entries = (
         [{"account": "paper", **t} for t in paper]
         + [{"account": "shadow", **t} for t in shadow]
-        + [{"account": "shadow_bingx", **t} for t in shadow_bingx]
+        + [{"account": "shadow_bingx_demo", **t} for t in shadow_bingx_demo]
+        + [{"account": "shadow_bingx_live", **t} for t in shadow_bingx_live]
         + [{"account": "momentum", **t} for t in momentum]
-        + [{"account": "momentum_bingx", **t} for t in momentum_bingx]
+        + [{"account": "momentum_bingx_demo", **t} for t in momentum_bingx_demo]
+        + [{"account": "momentum_bingx_live", **t} for t in momentum_bingx_live]
     )
     entries.sort(key=lambda t: t["closed_at"], reverse=True)
     return {"entries": entries[:limit]}
@@ -444,6 +484,98 @@ async def get_liquidations_summary(
             "short_count": int(df["short_count"].sum()) if not df.empty else 0,
         })
     return {"window_minutes": 60, "symbols": rows}
+
+
+# -- BingX account settings (Fase 17 - demo/live switch from the dashboard) ---
+# BingX uses ONE key for both demo (VST) and live balances - there is no
+# second credential slot, only a mode to pick. Switching to 'live' requires
+# this exact confirmation phrase in the request body, on top of already
+# having a saved key - a deliberate two-step gate against ever flipping to
+# real money by accident (spec's "trava explícita contra o acidente
+# clássico: paper -> live sem querer", applied here to demo -> live).
+_LIVE_MODE_CONFIRMATION_PHRASE = "ATIVAR CONTA REAL"
+
+
+class BingxCredentialsRequest(BaseModel):
+    api_key: str
+    api_secret: str
+
+
+class BingxModeRequest(BaseModel):
+    mode: str
+    confirm: str | None = None
+
+
+@router.get("/settings/bingx")
+async def get_bingx_settings(bingx_account_repo: BingxAccountRepository = Depends(get_bingx_account_repo)) -> dict:
+    state = await bingx_account_repo.get_settings()
+    return {
+        "mode": state.mode,
+        "credentials_configured": state.credentials_configured,
+        "updated_at": state.updated_at,
+    }
+
+
+@router.post("/settings/bingx/credentials")
+async def save_bingx_credentials(
+    body: BingxCredentialsRequest,
+    bingx_account_repo: BingxAccountRepository = Depends(get_bingx_account_repo),
+) -> dict:
+    api_key = body.api_key.strip()
+    api_secret = body.api_secret.strip()
+    if not api_key or not api_secret:
+        raise HTTPException(status_code=400, detail="api_key e api_secret são obrigatórios")
+    # Validate against BingX for real before persisting anything, read-only
+    # (account balance) - tried against the demo/VST endpoint since that's
+    # always safe to hit and the same key works against both per BingX's
+    # account model, so a working demo probe means the key itself is good.
+    probe = BingXFuturesRestClient(testnet=True, api_key=api_key, api_secret=api_secret)
+    try:
+        await probe.get_account_balance()
+    except (BingXRestError, BingXOrderError) as exc:
+        raise HTTPException(status_code=400, detail=f"não foi possível validar a chave na BingX: {exc}") from exc
+    finally:
+        await probe.aclose()
+    await bingx_account_repo.save_credentials(api_key, api_secret)
+    return {"saved": True}
+
+
+@router.post("/settings/bingx/mode")
+async def set_bingx_mode(
+    body: BingxModeRequest,
+    bingx_account_repo: BingxAccountRepository = Depends(get_bingx_account_repo),
+    shadow_repo: ShadowRepository = Depends(get_shadow_repo),
+    momentum_repo: MomentumRepository = Depends(get_momentum_repo),
+) -> dict:
+    if body.mode not in ("demo", "live"):
+        raise HTTPException(status_code=400, detail="mode deve ser 'demo' ou 'live'")
+    current = await bingx_account_repo.get_settings()
+    if body.mode == current.mode:
+        return {"mode": current.mode}
+    if body.mode == "live":
+        if not current.credentials_configured:
+            raise HTTPException(status_code=400, detail="configure uma chave da BingX antes de ativar a conta real")
+        if body.confirm != _LIVE_MODE_CONFIRMATION_PHRASE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"para ativar a conta REAL, envie confirm={_LIVE_MODE_CONFIRMATION_PHRASE!r} exatamente",
+            )
+    # Never switch modes while either BingX engine still has a position open
+    # under the mode being LEFT - the exchange-side position set is
+    # completely different between VST and prod (same key, different
+    # balance), so an in-flight switch would orphan a still-open, still-real
+    # position from this dashboard's view of the world.
+    open_symbols = (
+        await shadow_repo.get_open_symbols(f"shadow_bingx_{current.mode}")
+        + await momentum_repo.get_open_symbols(f"momentum_bingx_{current.mode}")
+    )
+    if open_symbols:
+        raise HTTPException(
+            status_code=409,
+            detail=f"feche as posições abertas em modo {current.mode} antes de trocar de conta: {open_symbols}",
+        )
+    await bingx_account_repo.set_mode(body.mode)
+    return {"mode": body.mode}
 
 
 def _stale_threshold_seconds(interval: str) -> float:

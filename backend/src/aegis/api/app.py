@@ -25,7 +25,6 @@ from fastapi.staticfiles import StaticFiles
 
 from aegis.config import get_settings
 from aegis.db.engine import close_pool, create_pool
-from aegis.providers.bingx.rest_client import BingXFuturesRestClient
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -36,23 +35,25 @@ async def _lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.pool = await create_pool(settings)
-    # Read-only, long-lived REST clients used ONLY to enrich open positions
+    # Read-only, long-lived REST client used ONLY to enrich open positions
     # with live mark price / unrealized PnL (GET /api/positions) - never to
     # place or cancel anything from this dashboard. Built even without
     # credentials configured; every signed call already fails safely
-    # (BinanceOrderError/BingXOrderError) and callers treat that as "no
-    # live enrichment available" rather than crashing the endpoint.
+    # (BinanceOrderError) and callers treat that as "no live enrichment
+    # available" rather than crashing the endpoint.
+    #
+    # BingX has no equivalent long-lived client here (Fase 17): its key and
+    # demo/live mode are managed from the dashboard and can change at any
+    # time, so /api/positions builds short-lived BingX clients per request
+    # from whatever's currently in bingx_account_settings instead of one
+    # fixed at startup - see aegis.api.routes.get_positions.
     app.state.binance_rest = BinanceFuturesRestClient(
         testnet=settings.binance_testnet, api_key=settings.binance_api_key, api_secret=settings.binance_api_secret,
-    )
-    app.state.bingx_rest = BingXFuturesRestClient(
-        testnet=settings.bingx_testnet, api_key=settings.bingx_api_key, api_secret=settings.bingx_api_secret,
     )
     try:
         yield
     finally:
         await app.state.binance_rest.aclose()
-        await app.state.bingx_rest.aclose()
         await close_pool(app.state.pool)
 
 

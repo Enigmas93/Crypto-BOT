@@ -39,7 +39,14 @@ from aegis.db.risk_repository import RiskRepository  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 
 _LOG = get_logger("scripts.run_daily_reset")
-_ACCOUNTS = ("paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx")
+# Fase 17: shadow_bingx/momentum_bingx split into _demo/_live variants (see
+# migration 0018) - both are listed regardless of which one is currently
+# active, so a dormant mode's daily baseline is still correct the moment
+# it's switched back to.
+_ACCOUNTS = (
+    "paper", "shadow", "shadow_bingx_demo", "shadow_bingx_live",
+    "momentum", "momentum_bingx_demo", "momentum_bingx_live",
+)
 _CHECK_INTERVAL_SECONDS = 60.0
 
 

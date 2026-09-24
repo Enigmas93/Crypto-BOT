@@ -3108,6 +3108,79 @@ Dashboard) já rodando havia horas em produção real de testnet:
   reorganizado em grupos por estratégia (Paper/Shadow/Momentum) em vez de
   uma linha do tempo única misturada.
 
+## Métricas da Fase 17 (auditoria completa + troca de conta demo/real da BingX pelo dashboard)
+
+- Auditoria pedida pelo usuário ("verifique problemas e corrija tudo")
+  percorreu as 8 verificações do `RiskEngine.evaluate()` uma a uma contra o
+  que de fato é persistido, e achou dois gatilhos de segurança
+  silenciosamente inertes desde sempre:
+  - `open_positions_count` nunca era escrito por nenhum dos 5 engines de
+    trading (`set_exposure` existia e tinha teste unitário, mas nada o
+    chamava) — o limite `MAX_POSITIONS` nunca disparou para nenhuma conta.
+    Corrigido nos 3 engines (shadow/paper/momentum) em todo ponto de
+    abertura/fechamento; contagens já em produção foram recalculadas ao
+    vivo (ex.: shadow 0→4, shadow_bingx 0→1).
+  - `reset_daily()` existe desde a Fase 7 mas só era chamado por um script
+    de demo manual — `daily_realized_pnl` acumulava desde a criação da
+    conta, nunca zerava, então `MAX_DAILY_LOSS` comparava contra PnL
+    vitalício e o "PnL do dia" do dashboard era na real PnL acumulado.
+    Corrigido com `scripts/run_daily_reset.py` (verifica a cada 60s,
+    restart-safe via `risk_account_state.updated_at`), registrado no
+    supervisor.
+  - `correlated_exposure_pct` é checado pelo RiskEngine mas nunca
+    calculado em lugar nenhum — reportado ao usuário, não corrigido
+    sozinho (é uma feature nova, não uma fiação faltando, e exige decisão
+    de metodologia de correlação/janela).
+- Pedido seguinte do usuário: expor a execução real (dinheiro de verdade)
+  na BingX, configurável pelo dashboard, sem editar `.env` nem reiniciar
+  nada manualmente. Escopo acordado com o usuário (`AskUserQuestion`):
+  segurança + troca de conta primeiro; os motores analíticos ainda
+  faltantes do blueprint original (RegimeEngine, FeatureEngine,
+  PortfolioCorrelationEngine, CapitalAllocationEngine, AsymmetryEngine, a
+  5ª estratégia Liquidation/Squeeze, Walk-Forward) ficam para uma rodada
+  seguinte com design revisado antes de codar.
+- Correção de premissa feita pelo próprio usuário no meio da implementação:
+  a BingX **não** tem duas chaves de API separadas para demo e real — é
+  UMA chave que serve para as duas contas (VST e real), o que muda é só o
+  modo (endpoint VST vs. produção). O design foi simplificado de "duas
+  chaves guardadas + toggle" para "uma chave + seletor de modo".
+- `bingx_account_settings` (migration 0018): linha única (`id='singleton'`)
+  com a chave/segredo criptografados em repouso (Fernet,
+  `CREDENTIAL_ENCRYPTION_KEY`, `aegis.security.credential_crypto`) e o modo
+  atual (`demo`/`live`). Semeada automaticamente a partir do
+  `BINGX_API_KEY`/`SECRET` pré-existentes no `.env` para não quebrar os
+  engines já rodando na hora do upgrade.
+- Trocar de modo é bloqueado (409) enquanto `shadow_bingx_<modo atual>` ou
+  `momentum_bingx_<modo atual>` tiver posição aberta — trocar aponta para
+  um saldo diferente na mesma corretora (mesma chave, endpoint diferente),
+  então uma posição em voo de um modo fica invisível (não "fechada",
+  genuinamente sem rastreio) do outro lado. Ativar o modo `live` também
+  exige o corpo da requisição trazer `confirm="ATIVAR CONTA REAL"` — uma
+  segunda trava explícita, deliberada, contra ativar dinheiro real sem
+  querer, no espírito do "paper → live sem querer" do blueprint original.
+  `POST /api/settings/bingx/credentials` valida a chave contra a BingX de
+  verdade (uma chamada real de saldo) antes de gravar qualquer coisa.
+- Histórico/estado de risco de demo e real ficam em `account_id`s
+  totalmente separados (`shadow_bingx_demo`/`shadow_bingx_live`,
+  `momentum_bingx_demo`/`momentum_bingx_live`) — nunca no mesmo balde,
+  para que uma sequência de perdas em demo nunca influencie o Kill
+  Switch/drawdown de uma conta real, e vice-versa. A migration renomeia
+  todo o histórico pré-Fase-17 (que era 100% VST) para `_demo`.
+  `scripts/run_bingx_shadow_trading.py`/`run_bingx_momentum_trading.py`
+  foram reescritos em torno de `aegis.execution.bingx_session
+  .BingxSessionManager`, que sonda `bingx_account_settings` a cada ciclo e
+  reconstrói o cliente REST/conta ativa sozinho quando o modo muda pelo
+  dashboard — sem reiniciar o processo.
+- 24 testes novos (654/654 no total): unitários de
+  `credential_crypto`/`BingxSessionManager` (sem rede real), integração de
+  `BingxAccountRepository` contra o Postgres real, e os endpoints novos em
+  `test_api_routes.py`. Verificado ao vivo depois do deploy: os dois
+  engines BingX reiniciaram sozinhos via supervisor, re-encontraram a
+  posição aberta pré-existente sob o novo `account_id`
+  (`shadow_bingx_demo`), e os quatro guard-rails do endpoint de troca de
+  modo (sem confirmação, com confirmação mas posição aberta, modo
+  inválido, mesmo modo) responderam exatamente como projetado.
+
 ## Métricas da Fase 11
 
 - 456/456 testes passando no total do backend (10 novos desta fase, todos
