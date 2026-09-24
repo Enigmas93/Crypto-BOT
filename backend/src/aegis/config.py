@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     # not "1000pepe").
     event_risk_coin_slugs: str = "bitcoin,ethereum,solana,ripple,dogecoin,pepe,near-protocol"
 
+    # BingX (Fase 16, planning stage - see backend/README.md) --------------------
+    # Credentials only for now; no BingX execution code exists yet. Verified
+    # live 2026-09-24 against the VST (testnet) balance endpoint - keys are
+    # valid and provisioned for BingX's Perpetual Swap testnet.
+    bingx_api_key: str = ""
+    bingx_api_secret: str = ""
+    bingx_testnet: bool = True
+
     # Notifications / Telegram (Fase 15b) ----------------------------------------
     # Optional - engines run identically without it, just silently skip
     # sending. Alerts only on things that need a human: Kill Switch
