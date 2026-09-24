@@ -4,406 +4,248 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Aegis Quant — Dashboard</title>
-<style>
-  :root {
-    --bg: #0b0d12; --surface: #12151c; --surface-2: #171b24; --border: #262b36;
-    --text: #e6e9ef; --text-dim: #a8afbd; --text-faint: #6b7280;
-    --accent: #7c9cff; --ok: #34d399; --warn: #fbbf24; --crit: #f87171;
-    --long: #34d399; --short: #f87171;
-  }
-  * { box-sizing: border-box; }
-  body {
-    background: var(--bg); color: var(--text); margin: 0; padding: 24px;
-    font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px;
-  }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { color: var(--text-faint); font-size: 12.5px; margin-bottom: 20px; }
-  .mono { font-family: "SFMono-Regular", Consolas, monospace; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; margin-bottom: 20px; }
-  .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px 18px;
-  }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0 0 12px; }
-  .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 10px; }
-  .tile { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
-  .tile .tl { font-size: 11px; color: var(--text-faint); margin-bottom: 4px; }
-  .tile .tv { font-size: 16px; font-weight: 600; }
-  .up { color: var(--ok); } .down { color: var(--crit); }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .pill.ok { background: rgba(52,211,153,.15); color: var(--ok); }
-  .pill.warn { background: rgba(251,191,36,.15); color: var(--warn); }
-  .pill.crit { background: rgba(248,113,113,.15); color: var(--crit); }
-  .pill.long { background: rgba(52,211,153,.15); color: var(--long); }
-  .pill.short { background: rgba(248,113,113,.15); color: var(--short); }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; color: var(--text-faint); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  tr:last-child td { border-bottom: none; }
-  .empty { color: var(--text-faint); font-style: italic; padding: 8px; }
-  button {
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
-  }
-  button:hover { border-color: var(--accent); }
-  button.danger { color: var(--crit); border-color: rgba(248,113,113,.3); }
-  .refresh-note { color: var(--text-faint); font-size: 11px; margin-top: 24px; }
-</style>
+<link rel="stylesheet" href="/static/dashboard.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
-  <h1>Aegis Quant — Dashboard</h1>
-  <div class="sub">Fase 11 · dados reais do Postgres, atualiza a cada 10s · <span id="last-update"></span></div>
+<div class="app-shell">
 
-  <div class="grid" id="overview-grid"></div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Posições abertas — Paper</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th></tr></thead>
-        <tbody id="positions-paper"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Posições abertas — Shadow (testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th></tr></thead>
-        <tbody id="positions-shadow"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Posições abertas — Shadow BingX (VST/testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th></tr></thead>
-        <tbody id="positions-shadow_bingx"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Posições abertas — Momentum (testnet, "moonshot")</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop (segurança)</th><th>Momentum</th></tr></thead>
-        <tbody id="positions-momentum"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Posições abertas — Momentum BingX (VST/testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop (segurança)</th><th>Momentum</th></tr></thead>
-        <tbody id="positions-momentum_bingx"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Trades recentes — Paper</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
-        <tbody id="trades-paper"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Trades recentes — Shadow (testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
-        <tbody id="trades-shadow"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Trades recentes — Shadow BingX (VST/testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
-        <tbody id="trades-shadow_bingx"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Trades recentes — Momentum (testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
-        <tbody id="trades-momentum"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Trades recentes — Momentum BingX (VST/testnet)</h2>
-      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
-        <tbody id="trades-momentum_bingx"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Market Scanner — candidatos Momentum</h2>
-      <table><thead><tr><th>Símbolo</th><th>Momentum</th><th>Var. 24h</th><th>Volume 24h</th></tr></thead>
-        <tbody id="momentum-scan"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Status de notícia por ativo</h2>
-      <table><thead><tr><th>Ativo</th><th>Status</th><th>Fontes</th><th>Sentimento</th></tr></thead>
-        <tbody id="news-asset-status"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Feed de notícias recentes</h2>
-      <table><thead><tr><th>Fonte</th><th>Título</th><th>Sentimento</th></tr></thead>
-        <tbody id="news-recent"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card" style="grid-column: 1 / -1;">
-      <h2>Próximos eventos cripto (CoinMarketCal)</h2>
-      <table><thead><tr><th>Quando</th><th>Evento</th><th>Ativos</th></tr></thead>
-        <tbody id="events-upcoming"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card" style="grid-column: 1 / -1;">
-      <h2>Trading Journal — todas as contas</h2>
-      <table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th><th>Fechado em</th><th>Razões</th></tr></thead>
-        <tbody id="journal"></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Backtests recentes</h2>
-      <table><thead><tr><th>Símbolo</th><th>Trades</th><th>Win Rate</th><th>PnL líq.</th><th>Kill Switch</th></tr></thead>
-        <tbody id="backtests"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Saúde dos dados</h2>
-      <table><thead><tr><th>Símbolo</th><th>Intervalo</th><th>Último candle</th><th>Status</th></tr></thead>
-        <tbody id="health"></tbody></table>
-    </div>
-  </div>
-
-  <div class="refresh-note">Único endpoint de escrita: reset do Kill Switch (exige nota, auditado em kill_switch_events).</div>
-
-<script>
-const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-}[c]));
-const fmtMoney = (v) => v == null ? '—' : `$${v.toFixed(2)}`;
-const fmtPct = (v) => v == null ? '—' : `${(v * 100).toFixed(2)}%`;
-const fmtTime = (v) => v == null ? '—' : new Date(v).toLocaleString('pt-BR');
-const el = (id) => document.getElementById(id);
-
-async function resetKillSwitch(accountId) {
-  const note = prompt(`Motivo do reset do Kill Switch para "${accountId}" (obrigatório):`);
-  if (!note || !note.trim()) return;
-  const resp = await fetch(`/api/kill-switch/${accountId}/reset`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({note}),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({detail: resp.statusText}));
-    alert(`Falha ao resetar: ${err.detail}`);
-  }
-  await refresh();
-}
-
-function renderOverview(accounts) {
-  const grid = el('overview-grid');
-  grid.innerHTML = '';
-  for (const [accountId, acc] of Object.entries(accounts)) {
-    const card = document.createElement('div');
-    card.className = 'card';
-    if (!acc.initialized) {
-      card.innerHTML = `<h2>${accountId}</h2><div class="empty">Conta ainda não inicializada</div>`;
-      grid.appendChild(card);
-      continue;
-    }
-    const ddClass = acc.drawdown_pct > 0.075 ? 'crit' : acc.drawdown_pct > 0.05 ? 'warn' : 'ok';
-    const ksPill = acc.kill_switch.is_triggered
-      ? `<span class="pill crit">DISPARADO</span> <button class="danger" onclick="resetKillSwitch('${accountId}')">Reset</button>`
-      : `<span class="pill ok">Normal</span>`;
-    card.innerHTML = `
-      <h2>${accountId}${accountId === 'shadow' || accountId === 'momentum' ? ' (testnet)' : ''}${accountId === 'shadow_bingx' || accountId === 'momentum_bingx' ? ' (VST/testnet)' : ''}</h2>
-      <div class="tiles">
-        <div class="tile"><div class="tl">Equity</div><div class="tv">${fmtMoney(acc.equity)}</div></div>
-        <div class="tile"><div class="tl">Drawdown</div><div class="tv"><span class="pill ${ddClass}">${fmtPct(acc.drawdown_pct)}</span></div></div>
-        <div class="tile"><div class="tl">PnL do dia</div><div class="tv ${acc.daily_realized_pnl >= 0 ? 'up' : 'down'}">${fmtMoney(acc.daily_realized_pnl)}</div></div>
-        <div class="tile"><div class="tl">Perdas seguidas</div><div class="tv">${acc.consecutive_losses}</div></div>
+  <!-- ============ TOP BAR ============ -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div class="brand-text">
+        <h1>Aegis Quant</h1>
+        <div class="tagline">Trading Intelligence. Real Results.</div>
       </div>
-      <div>Kill Switch: ${ksPill}${acc.kill_switch.reasons && acc.kill_switch.reasons.length ? ` <span class="mono" style="color:var(--text-faint)">(${acc.kill_switch.reasons.join(', ')})</span>` : ''}</div>
-    `;
-    grid.appendChild(card);
-  }
-}
+    </div>
+    <div class="topbar-mid">
+      <span class="status-dot"><span class="dot"></span>SYSTEM ONLINE</span>
+      <span id="last-update" class="refresh-note">—</span>
+      <span class="badge warn">Ambiente: Testnet</span>
+    </div>
+    <div class="topbar-actions">
+      <div class="icon-btn" title="Notificações">&#128276;</div>
+      <div class="icon-btn" title="Configurações">&#9881;</div>
+      <div class="exchange-toggle">
+        <button class="binance" data-exchange="binance">&#9670; BINANCE</button>
+        <button class="bingx active" data-exchange="bingx">&#10060; BINGX</button>
+      </div>
+    </div>
+  </div>
 
-function renderPositions(tbodyId, positions) {
-  const tbody = el(tbodyId);
-  if (!positions.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Nenhuma posição aberta</td></tr>'; return; }
-  tbody.innerHTML = positions.map(p => `
-    <tr>
-      <td class="mono">${p.symbol}</td>
-      <td><span class="pill ${p.side === 'LONG' ? 'long' : 'short'}">${p.side}</span></td>
-      <td class="mono">${p.entry_price.toFixed(2)}</td>
-      <td class="mono">${p.quantity}</td>
-      <td class="mono">${p.stop_price.toFixed(2)}</td>
-      <td class="mono">${p.take_profit_price.toFixed(2)}</td>
-    </tr>`).join('');
-}
+  <!-- ============ TAB NAV ============ -->
+  <div class="tabbar">
+    <button class="tab-btn" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="binance">Binance</button>
+    <button class="tab-btn active" data-tab="bingx">BingX</button>
+    <button class="tab-btn" data-tab="strategies">Strategies</button>
+    <button class="tab-btn" data-tab="positions">Positions</button>
+    <button class="tab-btn" data-tab="orders">Orders</button>
+    <button class="tab-btn" data-tab="risk">Risk &amp; Logs</button>
+  </div>
 
-function renderMomentumPositions(tbodyId, positions) {
-  const tbody = el(tbodyId);
-  if (!positions.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Nenhuma posição aberta</td></tr>'; return; }
-  tbody.innerHTML = positions.map(p => `
-    <tr>
-      <td class="mono">${p.symbol}</td>
-      <td><span class="pill ${p.side === 'LONG' ? 'long' : 'short'}">${p.side}</span></td>
-      <td class="mono">${p.entry_price}</td>
-      <td class="mono">${p.quantity}</td>
-      <td class="mono">${p.stop_price}</td>
-      <td class="mono">${p.momentum_score.toFixed(1)}%</td>
-    </tr>`).join('');
-}
+  <div class="main">
 
-function renderMomentumScan(candidates) {
-  const tbody = el('momentum-scan');
-  if (!candidates.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhum candidato no momento</td></tr>'; return; }
-  tbody.innerHTML = candidates.map(c => `
-    <tr>
-      <td class="mono">${c.symbol}</td>
-      <td class="mono">${c.momentum_score.toFixed(1)}%</td>
-      <td class="mono ${c.price_change_pct >= 0 ? 'up' : 'down'}">${c.price_change_pct.toFixed(2)}%</td>
-      <td class="mono">${(c.quote_volume / 1e6).toFixed(1)}M</td>
-    </tr>`).join('');
-}
+    <!-- ============ OVERVIEW ============ -->
+    <div class="view" id="view-overview">
+      <div class="kpi-row" id="overview-kpis"></div>
+      <div class="grid full">
+        <div class="card">
+          <h2>Patrimônio — todas as contas</h2>
+          <div style="height:280px"><canvas id="overview-chart"></canvas></div>
+        </div>
+      </div>
+      <div class="grid full">
+        <div class="card">
+          <h2>Resumo por conta</h2>
+          <div class="table-scroll">
+            <table><thead><tr><th>Conta</th><th>Equity</th><th>PnL hoje</th><th>Drawdown</th><th>Perdas seg.</th><th>Posições</th><th>Kill Switch</th></tr></thead>
+              <tbody id="overview-accounts-table"></tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
 
-const sentimentPill = (s) => {
-  if (s === 'positive') return '<span class="pill ok">positive</span>';
-  if (s === 'negative') return '<span class="pill crit">negative</span>';
-  if (s === 'neutral') return '<span class="pill warn">neutral</span>';
-  return '—';
-};
+    <!-- ============ BINANCE / BINGX (shared template, two instances) ============ -->
+    <div class="view" id="view-binance">
+      <div class="card exchange-banner" id="banner-binance" style="margin-bottom:16px;">
+        <div class="ex-icon binance">B</div>
+        <div class="ex-info">
+          <div class="name-row"><h2>BINANCE</h2><span class="pill-env" id="env-badge-binance">TESTNET</span></div>
+          <p>Ambiente de teste — execução real na Binance Futures</p>
+        </div>
+        <div class="stat-strip"></div>
+      </div>
 
-function renderNewsAssetStatus(statuses) {
-  const tbody = el('news-asset-status');
-  if (!statuses.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhum status ainda</td></tr>'; return; }
-  const statusPill = (s) => {
-    if (s === 'CONFIRMED') return '<span class="pill ok">CONFIRMED</span>';
-    if (s === 'NEWS_CONFLICT') return '<span class="pill crit">NEWS_CONFLICT</span>';
-    return `<span class="pill warn">${s}</span>`;
-  };
-  tbody.innerHTML = statuses.map(s => `
-    <tr>
-      <td class="mono">${s.asset}</td>
-      <td>${statusPill(s.status)}</td>
-      <td class="mono">${s.distinct_sources}</td>
-      <td>${sentimentPill(s.dominant_sentiment)}</td>
-    </tr>`).join('');
-}
+      <div class="grid g2">
+        <div class="card">
+          <h2>Performance (BINANCE — Testnet)
+            <span class="chart-tabs">
+              <button data-range="1D">1D</button><button data-range="7D" class="active">7D</button>
+              <button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">Todos</button>
+            </span>
+          </h2>
+          <div style="height:240px"><canvas id="chart-binance"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Atividade das Estratégias (BINANCE)</h2>
+          <div class="activity-list" id="activity-binance"></div>
+        </div>
+        <div class="card">
+          <h2>Estratégias (BINANCE)</h2>
+          <div class="grid full" id="strategies-binance" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin:0;"></div>
+        </div>
+      </div>
 
-function renderNewsRecent(items) {
-  const tbody = el('news-recent');
-  if (!items.length) { tbody.innerHTML = '<tr><td colspan="3" class="empty">Nenhuma notícia ainda</td></tr>'; return; }
-  tbody.innerHTML = items.map(i => `
-    <tr>
-      <td class="mono">${escapeHtml(i.source_id)}</td>
-      <td>${escapeHtml(i.title)}</td>
-      <td>${sentimentPill(i.sentiment)}</td>
-    </tr>`).join('');
-}
+      <div class="grid g2">
+        <div class="card" style="grid-column: span 2;">
+          <h2>Posições Abertas (BINANCE — Testnet)</h2>
+          <div class="table-scroll">
+            <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop Loss</th><th>Take Profit</th><th>Mark Price</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
+              <tbody id="positions-table-binance"></tbody></table>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Risk Monitor (BINANCE)</h2>
+          <div id="risk-binance"></div>
+        </div>
+        <div class="card">
+          <h2>Execução (BINANCE)</h2>
+          <div class="feed" id="feed-binance"></div>
+        </div>
+      </div>
+    </div>
 
-function renderUpcomingEvents(events) {
-  const tbody = el('events-upcoming');
-  if (!events.length) { tbody.innerHTML = '<tr><td colspan="3" class="empty">Nenhum evento pendente</td></tr>'; return; }
-  tbody.innerHTML = events.map(e => `
-    <tr>
-      <td class="mono">${escapeHtml(e.displayed_date)}</td>
-      <td>${escapeHtml(e.title)}</td>
-      <td class="mono">${(e.coins || []).map(escapeHtml).join(', ')}</td>
-    </tr>`).join('');
-}
+    <div class="view active" id="view-bingx">
+      <div class="card exchange-banner" id="banner-bingx" style="margin-bottom:16px;">
+        <div class="ex-icon bingx">X</div>
+        <div class="ex-info">
+          <div class="name-row"><h2>BINGX</h2><span class="pill-env" id="env-badge-bingx">VST · TESTNET</span></div>
+          <p>Ambiente de teste — simulação de estratégias (VST)</p>
+        </div>
+        <div class="stat-strip"></div>
+      </div>
 
-function renderJournal(entries) {
-  const tbody = el('journal');
-  if (!entries.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty">Nenhum trade ainda</td></tr>'; return; }
-  tbody.innerHTML = entries.map(e => `
-    <tr>
-      <td class="mono">${e.account}</td>
-      <td class="mono">${e.symbol}</td>
-      <td><span class="pill ${e.side === 'LONG' ? 'long' : 'short'}">${e.side}</span></td>
-      <td class="mono">${e.exit_reason}</td>
-      <td class="mono ${e.net_pnl >= 0 ? 'up' : 'down'}">${fmtMoney(e.net_pnl)}</td>
-      <td class="mono">${e.r_multiple.toFixed(2)}</td>
-      <td class="mono">${fmtTime(e.closed_at)}</td>
-      <td style="color:var(--text-faint); font-size:11.5px;">${escapeHtml((e.reasons || []).join('; '))}</td>
-    </tr>`).join('');
-}
+      <div class="grid g2">
+        <div class="card">
+          <h2>Performance (BINGX — VST/Testnet)
+            <span class="chart-tabs">
+              <button data-range="1D">1D</button><button data-range="7D" class="active">7D</button>
+              <button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">Todos</button>
+            </span>
+          </h2>
+          <div style="height:240px"><canvas id="chart-bingx"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Atividade das Estratégias (BINGX)</h2>
+          <div class="activity-list" id="activity-bingx"></div>
+        </div>
+        <div class="card">
+          <h2>Estratégias (BINGX)</h2>
+          <div class="grid full" id="strategies-bingx" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin:0;"></div>
+        </div>
+      </div>
 
-function renderTrades(tbodyId, trades) {
-  const tbody = el(tbodyId);
-  if (!trades.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhum trade ainda</td></tr>'; return; }
-  tbody.innerHTML = trades.map(t => `
-    <tr>
-      <td class="mono">${t.symbol}</td>
-      <td><span class="pill ${t.side === 'LONG' ? 'long' : 'short'}">${t.side}</span></td>
-      <td class="mono">${t.exit_reason}</td>
-      <td class="mono ${t.net_pnl >= 0 ? 'up' : 'down'}">${fmtMoney(t.net_pnl)}</td>
-      <td class="mono">${t.r_multiple.toFixed(2)}</td>
-    </tr>`).join('');
-}
+      <div class="grid g2">
+        <div class="card" style="grid-column: span 2;">
+          <h2>Posições Abertas (BINGX — VST/Testnet)</h2>
+          <div class="table-scroll">
+            <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop Loss</th><th>Take Profit</th><th>Mark Price</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
+              <tbody id="positions-table-bingx"></tbody></table>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Risk Monitor (BINGX)</h2>
+          <div id="risk-bingx"></div>
+        </div>
+        <div class="card">
+          <h2>Execução (BINGX)</h2>
+          <div class="feed" id="feed-bingx"></div>
+        </div>
+      </div>
+    </div>
 
-function renderBacktests(runs) {
-  const tbody = el('backtests');
-  if (!runs.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhum backtest ainda</td></tr>'; return; }
-  tbody.innerHTML = runs.map(r => `
-    <tr>
-      <td class="mono">${r.symbol}</td>
-      <td class="mono">${r.total_trades}</td>
-      <td class="mono">${fmtPct(r.win_rate)}</td>
-      <td class="mono ${r.net_pnl >= 0 ? 'up' : 'down'}">${fmtMoney(r.net_pnl)}</td>
-      <td>${r.kill_switch_triggered ? '<span class="pill crit">Disparou</span>' : '<span class="pill ok">—</span>'}</td>
-    </tr>`).join('');
-}
+    <!-- ============ STRATEGIES ============ -->
+    <div class="view" id="view-strategies">
+      <div class="section-title">Todas as estratégias</div>
+      <div class="grid full" id="strategies-all" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));"></div>
+    </div>
 
-function renderHealth(rows) {
-  const tbody = el('health');
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td class="mono">${r.symbol}</td>
-      <td class="mono">${r.interval}</td>
-      <td class="mono">${fmtTime(r.latest_close_time)}</td>
-      <td>${r.stale ? '<span class="pill crit">Atrasado</span>' : '<span class="pill ok">OK</span>'}</td>
-    </tr>`).join('');
-}
+    <!-- ============ POSITIONS ============ -->
+    <div class="view" id="view-positions">
+      <div class="card">
+        <h2>Todas as posições abertas</h2>
+        <div class="subtitle">Consolidado de todas as contas (Paper, Shadow, Shadow BingX, Momentum, Momentum BingX)</div>
+        <div class="table-scroll">
+          <table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop Loss</th><th>Take Profit</th><th>Mark Price</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
+            <tbody id="positions-table-all"></tbody></table>
+        </div>
+      </div>
+    </div>
 
-async function refresh() {
-  try {
-    const [overview, positions, tradesPaper, tradesShadow, tradesShadowBingx, tradesMomentum, tradesMomentumBingx, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, journal, backtests, health] = await Promise.all([
-      fetch('/api/overview').then(r => r.json()),
-      fetch('/api/positions').then(r => r.json()),
-      fetch('/api/trades?account=paper&limit=15').then(r => r.json()),
-      fetch('/api/trades?account=shadow&limit=15').then(r => r.json()),
-      fetch('/api/trades?account=shadow_bingx&limit=15').then(r => r.json()),
-      fetch('/api/trades?account=momentum&limit=15').then(r => r.json()),
-      fetch('/api/trades?account=momentum_bingx&limit=15').then(r => r.json()),
-      fetch('/api/momentum/scan').then(r => r.json()),
-      fetch('/api/news/asset-status').then(r => r.json()),
-      fetch('/api/news/recent?limit=15').then(r => r.json()),
-      fetch('/api/events/upcoming?limit=20').then(r => r.json()),
-      fetch('/api/journal?limit=30').then(r => r.json()),
-      fetch('/api/backtests?limit=15').then(r => r.json()),
-      fetch('/api/system/health').then(r => r.json()),
-    ]);
-    renderOverview(overview.accounts);
-    renderPositions('positions-paper', positions.paper);
-    renderPositions('positions-shadow', positions.shadow);
-    renderPositions('positions-shadow_bingx', positions.shadow_bingx);
-    renderMomentumPositions('positions-momentum', positions.momentum);
-    renderMomentumPositions('positions-momentum_bingx', positions.momentum_bingx);
-    renderTrades('trades-paper', tradesPaper.trades);
-    renderTrades('trades-shadow', tradesShadow.trades);
-    renderTrades('trades-shadow_bingx', tradesShadowBingx.trades);
-    renderTrades('trades-momentum', tradesMomentum.trades);
-    renderTrades('trades-momentum_bingx', tradesMomentumBingx.trades);
-    renderMomentumScan(momentumScan.candidates);
-    renderNewsAssetStatus(newsAssetStatus.statuses);
-    renderNewsRecent(newsRecent.items);
-    renderUpcomingEvents(eventsUpcoming.events);
-    renderJournal(journal.entries);
-    renderBacktests(backtests.runs);
-    renderHealth(health.candles);
-    el('last-update').textContent = `última atualização: ${new Date().toLocaleTimeString('pt-BR')}`;
-  } catch (e) {
-    el('last-update').textContent = `erro ao atualizar: ${e.message}`;
-  }
-}
+    <!-- ============ ORDERS ============ -->
+    <div class="view" id="view-orders">
+      <div class="card">
+        <h2>Histórico de trades (execuções fechadas)</h2>
+        <div class="subtitle">Não há um log de ordens granular persistido (ordem submetida/atualizada) — esta tabela mostra cada trade já fechado, todas as contas, mais recente primeiro.</div>
+        <div class="table-scroll">
+          <table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>Fechado em</th></tr></thead>
+            <tbody id="orders-table"></tbody></table>
+        </div>
+      </div>
+    </div>
 
-refresh();
-setInterval(refresh, 10000);
-</script>
+    <!-- ============ RISK & LOGS ============ -->
+    <div class="view" id="view-risk">
+      <div class="section-title">Risco por conta</div>
+      <div class="grid g4" id="risk-logs-accounts"></div>
+
+      <div class="section-title">Saúde dos dados</div>
+      <div class="grid full">
+        <div class="card">
+          <table><thead><tr><th>Símbolo</th><th>Intervalo</th><th>Último candle</th><th>Status</th></tr></thead>
+            <tbody id="health-table"></tbody></table>
+        </div>
+      </div>
+
+      <div class="section-title">Notícias e eventos</div>
+      <div class="grid g3">
+        <div class="card">
+          <h2>Status por ativo</h2>
+          <table><thead><tr><th>Ativo</th><th>Status</th><th>Fontes</th><th>Sentimento</th></tr></thead>
+            <tbody id="news-status-table"></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Feed recente</h2>
+          <table><thead><tr><th>Fonte</th><th>Título</th><th>Sentimento</th></tr></thead>
+            <tbody id="news-recent-table"></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Próximos eventos (CoinMarketCal)</h2>
+          <table><thead><tr><th>Quando</th><th>Evento</th><th>Ativos</th></tr></thead>
+            <tbody id="events-table"></tbody></table>
+        </div>
+      </div>
+
+      <div class="section-title">Backtests recentes</div>
+      <div class="grid full">
+        <div class="card">
+          <table><thead><tr><th>Símbolo</th><th>Trades</th><th>Win Rate</th><th>PnL líq.</th><th>Kill Switch</th></tr></thead>
+            <tbody id="backtests-table"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <span>Aegis Quant v1.0.0 · Trading Bot de Criptomoedas</span>
+    <span id="footer-status">Testnet · atualiza a cada 10s</span>
+  </div>
+</div>
+
+<script src="/static/dashboard.js"></script>
 </body>
 </html>
