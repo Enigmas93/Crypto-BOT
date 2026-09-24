@@ -41,7 +41,7 @@ from aegis.risk.rules import compute_drawdown_pct
 
 router = APIRouter()
 
-_TRACKED_ACCOUNTS = ("paper", "shadow", "momentum")
+_TRACKED_ACCOUNTS = ("paper", "shadow", "shadow_bingx", "momentum")
 _TRADING_INTERVAL = "1h"  # the interval Paper/Shadow Trading actually act on (Phase 9/10)
 
 
@@ -77,7 +77,7 @@ async def get_positions(
     shadow_repo: ShadowRepository = Depends(get_shadow_repo),
     momentum_repo: MomentumRepository = Depends(get_momentum_repo),
 ) -> dict:
-    positions: dict[str, list[dict]] = {"paper": [], "shadow": [], "momentum": []}
+    positions: dict[str, list[dict]] = {"paper": [], "shadow": [], "shadow_bingx": [], "momentum": []}
     for symbol in settings.symbols:
         paper_position = await paper_repo.get_open_position("paper", symbol)
         if paper_position is not None:
@@ -95,6 +95,17 @@ async def get_positions(
                                          "stop_price": shadow_position.stop_price,
                                          "take_profit_price": shadow_position.take_profit_price,
                                          "entry_time": shadow_position.entry_time})
+        # BingX Shadow Trading (Fase 16) - same engine/table shape as
+        # Binance's "shadow" account, just a different account_id and a
+        # real order placed on a different exchange.
+        shadow_bingx_position = await shadow_repo.get_open_position("shadow_bingx", symbol)
+        if shadow_bingx_position is not None:
+            positions["shadow_bingx"].append({"symbol": symbol, "side": shadow_bingx_position.side,
+                                               "entry_price": shadow_bingx_position.entry_price,
+                                               "quantity": shadow_bingx_position.quantity,
+                                               "stop_price": shadow_bingx_position.stop_price,
+                                               "take_profit_price": shadow_bingx_position.take_profit_price,
+                                               "entry_time": shadow_bingx_position.entry_time})
     # Momentum's symbol universe is the Scanner's dynamic top-N, not the
     # fixed settings.symbols list - an open position can be in a symbol
     # never seen by any other engine (e.g. MUBARAKUSDT), so it must be
@@ -148,10 +159,12 @@ async def get_trades(
         trades = await paper_repo.fetch_trades("paper", limit=limit)
     elif account == "shadow":
         trades = await shadow_repo.fetch_trades("shadow", limit=limit)
+    elif account == "shadow_bingx":
+        trades = await shadow_repo.fetch_trades("shadow_bingx", limit=limit)
     elif account == "momentum":
         trades = await momentum_repo.fetch_trades("momentum", limit=limit)
     else:
-        raise HTTPException(status_code=400, detail="account must be 'paper', 'shadow' or 'momentum'")
+        raise HTTPException(status_code=400, detail="account must be 'paper', 'shadow', 'shadow_bingx' or 'momentum'")
     return {"account": account, "trades": trades}
 
 
@@ -170,14 +183,16 @@ async def get_journal(
     trades on its own (cheap - these tables are still small) so merging
     never has to worry about one account's older trades getting starved out
     by another's more active one before the final sort/truncate."""
-    paper, shadow, momentum = await asyncio.gather(
+    paper, shadow, shadow_bingx, momentum = await asyncio.gather(
         paper_repo.fetch_trades("paper", limit=limit),
         shadow_repo.fetch_trades("shadow", limit=limit),
+        shadow_repo.fetch_trades("shadow_bingx", limit=limit),
         momentum_repo.fetch_trades("momentum", limit=limit),
     )
     entries = (
         [{"account": "paper", **t} for t in paper]
         + [{"account": "shadow", **t} for t in shadow]
+        + [{"account": "shadow_bingx", **t} for t in shadow_bingx]
         + [{"account": "momentum", **t} for t in momentum]
     )
     entries.sort(key=lambda t: t["closed_at"], reverse=True)

@@ -209,8 +209,9 @@ alembic upgrade head          # cria todas as tabelas, até macro_series/macro_o
 python scripts/supervisor.py
 ```
 
-Lança os 10 processos de longa duração (Coletor, Derivatives, Liquidation,
-Order Book, Macro, News, Paper, Shadow, Momentum, Dashboard) de uma vez e
+Lança os 12 processos de longa duração (Coletor, Derivatives, Liquidation,
+Order Book, Macro, News, Event Risk, Paper, Shadow, Shadow BingX, Momentum,
+Dashboard) de uma vez e
 reinicia sozinho qualquer um que caia por qualquer motivo, com backoff
 exponencial (ver "Métricas da Fase 15b", item 8, pra detalhes e validação
 ao vivo). Essa é a forma recomendada de deixar o sistema rodando sem
@@ -404,6 +405,28 @@ imediatamente, sem tentar nada, se essas condições não baterem). Requer
 em testnet.binancefuture.com — chaves da conta Binance normal NÃO
 funcionam contra a testnet (são sistemas de autenticação completamente
 separados).
+
+## Rodar o Shadow Trading na BingX (ordens reais, VST/testnet - Fase 16)
+
+```bash
+python scripts/verify_bingx_execution_setup.py    # 1. confirma credenciais, recarrega saldo VST, garante modo one-way
+python scripts/verify_bingx_shadow_trading.py     # 2. abre/verifica/desfaz UM bracket pequeno de verdade na BingX
+python scripts/run_collector.py                   # 3. em um terminal - candles continuam vindo da Binance
+python scripts/run_bingx_shadow_trading.py        # 4. em outro - o poller contínuo, execução na BingX
+```
+
+Mesma disciplina do funil da Binance, mesma ordem obrigatória. A diferença
+é só onde a ordem é executada: os dados (candles) continuam vindo do
+coletor da Binance - a BingX entra exclusivamente como
+`BingXExecutionProvider`, por trás do mesmo `ShadowTradingEngine`. Roda
+como conta independente (`shadow_bingx`, visível separadamente no
+dashboard) - não interfere com `run_shadow_trading.py` (Binance) rodando
+ao mesmo tempo. Requer `BINGX_API_KEY`/`BINGX_API_SECRET` (gerada em
+bingx.com, funciona tanto contra VST quanto contra a conta real - o que
+muda é a URL base, controlada por `BINGX_TESTNET`) e recusa-se a rodar a
+menos que `BINGX_TESTNET=true` e `LIVE_TRADING=false`. Ver "Métricas da
+Fase 16" para o relato completo dos bugs reais encontrados e corrigidos
+durante a validação ao vivo contra a API da BingX.
 
 ## Rodar o Paper Trading (dados reais)
 
@@ -2861,6 +2884,123 @@ Dashboard) já rodando havia horas em produção real de testnet:
       conta de teste limpo do banco logo em seguida.
     - Chaves reais gravadas em `backend/.env` (`TELEGRAM_BOT_TOKEN`,
       `TELEGRAM_CHAT_ID`), mesmo tratamento de toda outra credencial.
+
+## Métricas da Fase 16 (migração de execução para BingX)
+
+- **Motivação**: a Binance não disponibiliza conta Futures real para
+  usuários no Brasil - uma barreira descoberta só na hora de considerar
+  sair do testnet. A BingX oferece Futures real no Brasil e o usuário já
+  tinha chaves de API para ela.
+- **Decisão de arquitetura**: a coleta de dados (candles, funding,
+  liquidações, order book) continua 100% na Binance - é pública, gratuita
+  e já profundamente testada. Só a EXECUÇÃO (ordens reais) migra para a
+  BingX, através de um novo `BingXExecutionProvider` que implementa a
+  MESMA interface (duck-typed) que `BinanceExecutionProvider` já
+  implementa - `ShadowTradingEngine` não muda uma linha, exatamente o
+  princípio de design que o próprio blueprint original já previa ("a
+  única peça que troca é o ExecutionProvider").
+- **Funil de segurança preservado**: BingX tem um ambiente de teste
+  genuíno, "VST" (Virtual Simulated Trading) - equivalente direto ao
+  testnet da Binance, com saldo virtual reabastecível sob demanda (`Apply
+  VST`). `scripts/run_bingx_shadow_trading.py` só roda contra
+  `BINGX_TESTNET=true`, mesmo padrão de trava dura que
+  `run_shadow_trading.py` já usa para a Binance.
+- **Descobertas reais só encontradas testando contra a API de verdade**
+  (não assumidas da documentação - mesma disciplina de "nunca confiar
+  numa fonte secundária não verificada" já aplicada ao CoinMarketCal na
+  Fase 15b):
+  1. O relógio local desta máquina estava ~7-8s atrasado em relação ao
+     servidor da BingX - o suficiente para violar o `recvWindow` máximo
+     de 5000ms da BingX (bem mais rígido que o da Binance) e falhar com
+     "timestamp is invalid". Corrigido sincronizando com
+     `/openApi/swap/v2/server/time` antes de assinar cada request.
+  2. A BingX NÃO reordena os parâmetros recebidos antes de conferir a
+     assinatura - um request transmitido em ordem diferente da usada para
+     assinar falha com código 100001 ("signature mismatch"), mesmo com a
+     assinatura calculada corretamente. Corrigido construindo o dicionário
+     de saída já em ordem ASCII-ordenada, não só a string usada para
+     assinar.
+  3. O endpoint "Apply VST" exige `adjustType` como INTEIRO e `amount`
+     como STRING - o oposto exato do que a tabela de parâmetros da
+     documentação descreve (string e int64, respectivamente).
+  4. `dualSidePosition` (modo de posição) volta como a STRING `"false"`,
+     não um booleano JSON - um `bool("false")` ingênuo em Python é `True`
+     (qualquer string não-vazia é truthy), o que faria o sistema achar
+     que a conta está em modo Hedge para sempre, mesmo já em one-way.
+     Corrigido comparando a string explicitamente. Teste de regressão
+     adicionado (`test_get_position_mode_parses_string_false_as_one_way_not_truthy`).
+  5. `quantity`/`stopPrice` precisam ser números JSON reais no corpo da
+     ordem - uma string formatada (o padrão que funciona na Binance) é
+     rejeitada com um genérico código 109400 "invalid parameters", sem
+     mensagem específica de campo.
+  6. `reduceOnly` precisa ser um booleano JSON real, e a string canônica
+     usada para assinar precisa renderizar esse booleano em minúsculas
+     ("true"/"false", como o `${bool}` do JavaScript faria) - o `str(True)`
+     do Python ("True", maiúsculo) quebra a assinatura porque o servidor
+     reconstrói sua própria string canônica a partir do JSON realmente
+     recebido.
+  7. A resposta de toda operação de ordem (colocar, consultar, cancelar)
+     vem aninhada sob uma chave `"order"` (`{"order": {...}}`), não com os
+     campos diretamente na raiz como a tabela da documentação sugere.
+  8. **Decisão de engenharia**: a BingX permite anexar `stopLoss`/
+     `takeProfit` na própria ordem de entrada (bracket em UMA chamada só -
+     algo que a Binance não tem). Pesquisado e descartado deliberadamente:
+     a documentação não mostra como recuperar os `orderId` das pernas de
+     stop/take-profit criadas automaticamente depois, e
+     `ShadowTradingEngine` precisa rastrear e consultar cada perna
+     separadamente para saber qual delas fechou a posição. Em vez de
+     adivinhar uma consulta não documentada, o provider usa o mesmo padrão
+     de 3 chamadas separadas já validado na Binance (entrada, depois stop,
+     depois take-profit) - cada uma com seu próprio `orderId` conhecido.
+  9. A conta BingX é forçada a rodar em modo **one-way** (nunca Hedge) -
+     `BingXExecutionProvider.ensure_one_way_mode()` - para casar
+     exatamente com a semântica que `PositionRisk`/`RiskEngine` já usam
+     em todo o resto do sistema (uma posição assinada por símbolo, não
+     LONG e SHORT simultâneos).
+  10. **Cancel All After** (dead-man's-switch nativo da corretora,
+      pesquisado como possível melhoria de segurança) foi implementado no
+      cliente REST (`cancel_all_after`/`cancel_all_after_close`, testado)
+      mas deliberadamente NÃO ligado ao loop de trading ao vivo: essa
+      funcionalidade cancela TODAS as ordens abertas se não for renovada
+      a tempo - incluindo as ordens de stop-loss/take-profit que
+      PRECISAM continuar protegendo uma posição aberta mesmo que o
+      processo do bot trave ou caia. Ligar isso ao loop transformaria a
+      própria rede de segurança em um risco (removeria a proteção de uma
+      posição exatamente quando o processo não está saudável para reagir).
+      Mantido disponível como capacidade de baixo nível, documentada e
+      testada, mas não usado por padrão.
+- **Validação ao vivo, ponta a ponta** (`scripts/verify_bingx_execution_setup.py`
+  depois `scripts/verify_bingx_shadow_trading.py`, mesma disciplina de
+  "nunca confiar sem testar contra a API real" da Fase 10): saldo
+  consultado e recarregado (VST estava em ~0,04, recarregado para
+  ~1000,04), modo de posição confirmado/trocado para one-way, ordem de
+  mercado real colocada, bracket completo (stop + take-profit) colocado
+  com `orderId`s próprios, posição confirmada aberta pelo lado da
+  corretora, ambas as pernas confirmadas com status `NEW`, limpeza
+  completa (cancelamento das duas pernas + fechamento a mercado) e
+  posição final confirmada zerada - tudo contra a API real da BingX
+  (VST), não um mock.
+- **Dashboard**: quarta conta rastreada (`shadow_bingx`) adicionada lado a
+  lado com `paper`/`shadow`/`momentum` - cards de posições abertas e
+  trades recentes próprios, e incluída no Trading Journal consolidado.
+  `scripts/run_bingx_shadow_trading.py` roda como conta independente
+  (`shadow_bingx`), em paralelo ao `run_shadow_trading.py` da Binance -
+  nenhum dos dois interfere no outro.
+- Credenciais da BingX gravadas em `backend/.env`
+  (`BINGX_API_KEY`/`BINGX_API_SECRET`/`BINGX_TESTNET`), mesmo tratamento
+  de toda outra credencial neste projeto - nunca versionadas, nunca
+  ecoadas de volta no chat.
+- 27 testes novos (`test_bingx_rest_client.py`,
+  `test_bingx_execution_provider.py`) cobrindo assinatura, mapeamento de
+  símbolo, os bugs reais encontrados acima (parsing de booleano-como-
+  string, ordem dos parâmetros, etc.) e os mesmos caminhos de falha
+  críticos que `test_binance_execution_provider.py` já cobre (uma perna
+  do bracket falhando nunca pode deixar uma posição sem proteção aberta).
+  602/602 testes passando no total do backend.
+- **Ainda pendente, por escolha do usuário** (funciona só em VST/testnet
+  por enquanto): decisão de quando promover a BingX para conta real, e
+  qual capital alocar - o usuário mencionou US$100 como valor inicial
+  planejado quando chegar a hora de sair do testnet.
 
 ## Métricas da Fase 11
 
