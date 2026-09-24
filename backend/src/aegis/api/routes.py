@@ -17,6 +17,8 @@ from pydantic import BaseModel
 
 from aegis.api.dependencies import (
     get_backtest_repo,
+    get_bingx_rest,
+    get_binance_rest,
     get_candle_repo,
     get_events_repo,
     get_kill_switch_repo,
@@ -37,6 +39,8 @@ from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
 from aegis.db.shadow_repository import ShadowRepository
+from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrderError, BingXRestError
+from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceOrderError, BinanceRestError
 from aegis.risk.rules import compute_drawdown_pct
 
 router = APIRouter()
@@ -70,12 +74,45 @@ async def get_overview(risk_repo: RiskRepository = Depends(get_risk_repo),
 
 
 # -- positions ------------------------------------------------------------
+async def _enrich_with_live_state(
+    positions: list[dict], rest_client: BinanceFuturesRestClient | BingXFuturesRestClient,
+) -> None:
+    """Mutates each position dict in place with what the exchange ITSELF
+    reports right now (mark_price, unrealized_pnl, mirror_ok) - the
+    dashboard must never show a position as "open" purely because a local
+    DB row says so without also showing whether the exchange still agrees.
+    `mirror_ok=False` (local says open, exchange says flat) is exactly the
+    failure mode a stuck/un-reconciled local record produces - surfaced
+    here instead of silently trusting local state, which is what let a
+    real bug (BingXExecutionProvider.cancel_leftover_order not recognizing
+    one of BingX's "already gone" error shapes) hide a stale "open"
+    position on the dashboard after it was actually already closed on the
+    exchange. Never fabricates a number - a position this call can't reach
+    the exchange for is left with mark_price/unrealized_pnl absent
+    (None), not a guessed value."""
+    for position in positions:
+        position["mark_price"] = None
+        position["unrealized_pnl"] = None
+        position["mirror_ok"] = None
+        try:
+            live = await rest_client.get_position_risk(position["symbol"])
+        except (BinanceRestError, BinanceOrderError, BingXRestError, BingXOrderError):
+            continue  # exchange unreachable/misconfigured - leave as "unknown", never guessed
+        live_amt = live[0].position_amt if live else 0.0
+        position["mirror_ok"] = live_amt != 0
+        if live_amt != 0:
+            position["mark_price"] = live[0].mark_price
+            position["unrealized_pnl"] = live[0].unrealized_pnl
+
+
 @router.get("/positions")
 async def get_positions(
     settings: Settings = Depends(get_settings_dep),
     paper_repo: PaperRepository = Depends(get_paper_repo),
     shadow_repo: ShadowRepository = Depends(get_shadow_repo),
     momentum_repo: MomentumRepository = Depends(get_momentum_repo),
+    binance_rest: BinanceFuturesRestClient = Depends(get_binance_rest),
+    bingx_rest: BingXFuturesRestClient = Depends(get_bingx_rest),
 ) -> dict:
     positions: dict[str, list[dict]] = {
         "paper": [], "shadow": [], "shadow_bingx": [], "momentum": [], "momentum_bingx": [],
@@ -134,6 +171,15 @@ async def get_positions(
                                                  "stop_price": momentum_bingx_position.stop_price,
                                                  "momentum_score": momentum_bingx_position.momentum_score,
                                                  "entry_time": momentum_bingx_position.entry_time})
+
+    # Live exchange-side enrichment (mark price, unrealized PnL, and
+    # whether the exchange still agrees a position is actually open) -
+    # "paper" is a local simulation with no real exchange position to
+    # check, so it's intentionally left out here.
+    await _enrich_with_live_state(positions["shadow"], binance_rest)
+    await _enrich_with_live_state(positions["momentum"], binance_rest)
+    await _enrich_with_live_state(positions["shadow_bingx"], bingx_rest)
+    await _enrich_with_live_state(positions["momentum_bingx"], bingx_rest)
     return positions
 
 
@@ -161,6 +207,26 @@ async def get_upcoming_events(limit: int = 20, events_repo: EventsRepository = D
 
 
 # -- trades ---------------------------------------------------------------
+async def _fetch_trades_for_account(
+    account: str, limit: int,
+    paper_repo: PaperRepository, shadow_repo: ShadowRepository, momentum_repo: MomentumRepository,
+) -> list[dict]:
+    if account == "paper":
+        return await paper_repo.fetch_trades("paper", limit=limit)
+    if account == "shadow":
+        return await shadow_repo.fetch_trades("shadow", limit=limit)
+    if account == "shadow_bingx":
+        return await shadow_repo.fetch_trades("shadow_bingx", limit=limit)
+    if account == "momentum":
+        return await momentum_repo.fetch_trades("momentum", limit=limit)
+    if account == "momentum_bingx":
+        return await momentum_repo.fetch_trades("momentum_bingx", limit=limit)
+    raise HTTPException(
+        status_code=400,
+        detail="account must be 'paper', 'shadow', 'shadow_bingx', 'momentum' or 'momentum_bingx'",
+    )
+
+
 @router.get("/trades")
 async def get_trades(
     account: str, limit: int = 20,
@@ -168,22 +234,37 @@ async def get_trades(
     shadow_repo: ShadowRepository = Depends(get_shadow_repo),
     momentum_repo: MomentumRepository = Depends(get_momentum_repo),
 ) -> dict:
-    if account == "paper":
-        trades = await paper_repo.fetch_trades("paper", limit=limit)
-    elif account == "shadow":
-        trades = await shadow_repo.fetch_trades("shadow", limit=limit)
-    elif account == "shadow_bingx":
-        trades = await shadow_repo.fetch_trades("shadow_bingx", limit=limit)
-    elif account == "momentum":
-        trades = await momentum_repo.fetch_trades("momentum", limit=limit)
-    elif account == "momentum_bingx":
-        trades = await momentum_repo.fetch_trades("momentum_bingx", limit=limit)
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="account must be 'paper', 'shadow', 'shadow_bingx', 'momentum' or 'momentum_bingx'",
-        )
+    trades = await _fetch_trades_for_account(account, limit, paper_repo, shadow_repo, momentum_repo)
     return {"account": account, "trades": trades}
+
+
+# -- equity history (derived, not a separately persisted time series) ---------
+_STARTING_EQUITY = 1000.0  # matches every run_*.py script's own _STARTING_EQUITY constant
+
+
+@router.get("/equity-history")
+async def get_equity_history(
+    account: str, limit: int = 200,
+    paper_repo: PaperRepository = Depends(get_paper_repo),
+    shadow_repo: ShadowRepository = Depends(get_shadow_repo),
+    momentum_repo: MomentumRepository = Depends(get_momentum_repo),
+) -> dict:
+    """Reconstructs an equity curve from real closed trades - there is no
+    separate point-in-time equity snapshot table, so this replays
+    `net_pnl` in chronological order starting from the same
+    `_STARTING_EQUITY` every account is initialized with
+    (`risk_repo.initialize_account_state`). This is REALIZED equity only
+    (an open position's unrealized PnL is not included) - a real, honest
+    curve derived entirely from persisted trade records, not a fabricated
+    or simulated one."""
+    trades = await _fetch_trades_for_account(account, limit, paper_repo, shadow_repo, momentum_repo)
+    trades_asc = sorted(trades, key=lambda t: t["closed_at"])
+    equity = _STARTING_EQUITY
+    points = [{"closed_at": None, "equity": equity}]
+    for trade in trades_asc:
+        equity += trade["net_pnl"]
+        points.append({"closed_at": trade["closed_at"], "net_pnl": trade["net_pnl"], "equity": equity})
+    return {"account": account, "starting_equity": _STARTING_EQUITY, "points": points}
 
 
 # -- trading journal ----------------------------------------------------------

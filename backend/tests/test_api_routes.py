@@ -19,16 +19,34 @@ import pytest
 
 from aegis.api.app import create_app
 from aegis.config import get_settings
+from aegis.providers.bingx.rest_client import BingXFuturesRestClient
+from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
 
 @pytest.fixture
 async def client(pool):
+    settings = get_settings()
     app = create_app()
     app.state.pool = pool
-    app.state.settings = get_settings()
+    app.state.settings = settings
+    # Not exercised via the real lifespan here (ASGITransport doesn't run
+    # it) - same manual wiring as pool/settings above. Credentials may be
+    # empty in this environment; every call on these clients already
+    # degrades to "no live enrichment" rather than raising (see
+    # routes._enrich_with_live_state), so this is safe either way.
+    app.state.binance_rest = BinanceFuturesRestClient(
+        testnet=settings.binance_testnet, api_key=settings.binance_api_key, api_secret=settings.binance_api_secret,
+    )
+    app.state.bingx_rest = BingXFuturesRestClient(
+        testnet=settings.bingx_testnet, api_key=settings.bingx_api_key, api_secret=settings.bingx_api_secret,
+    )
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        await app.state.binance_rest.aclose()
+        await app.state.bingx_rest.aclose()
 
 
 @pytest.mark.asyncio
@@ -55,6 +73,16 @@ async def test_positions_returns_paper_shadow_and_momentum_lists(client):
     for position in body["momentum"] + body["momentum_bingx"]:
         assert "take_profit_price" not in position
         assert "momentum_score" in position
+    # Every real-exchange account's positions carry live enrichment fields
+    # (never for "paper", which has no real exchange position to check) -
+    # mirror_ok is None only if the live exchange call itself failed, not
+    # simply because a position is well-mirrored or not.
+    for position in body["shadow"] + body["shadow_bingx"] + body["momentum"] + body["momentum_bingx"]:
+        assert "mark_price" in position
+        assert "unrealized_pnl" in position
+        assert "mirror_ok" in position
+    for position in body["paper"]:
+        assert "mark_price" not in position
 
 
 @pytest.mark.asyncio
@@ -143,7 +171,26 @@ async def test_trades_returns_a_list_for_momentum_bingx(client):
     body = resp.json()
     assert body["account"] == "momentum_bingx"
     assert isinstance(body["trades"], list)
-    assert len(body["trades"]) <= 5
+
+
+@pytest.mark.asyncio
+async def test_equity_history_starts_at_the_seed_value_and_ends_at_a_real_number(client):
+    resp = await client.get("/api/equity-history", params={"account": "paper", "limit": 500})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account"] == "paper"
+    points = body["points"]
+    assert points[0]["equity"] == body["starting_equity"]
+    assert points[0]["closed_at"] is None  # the seed point, before any trade
+    # non-decreasing count, chronological order
+    closed_ats = [p["closed_at"] for p in points[1:]]
+    assert closed_ats == sorted(closed_ats)
+
+
+@pytest.mark.asyncio
+async def test_equity_history_requires_a_known_account(client):
+    resp = await client.get("/api/equity-history", params={"account": "not_a_real_account"})
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

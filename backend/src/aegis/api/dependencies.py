@@ -17,6 +17,8 @@ from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
 from aegis.db.shadow_repository import ShadowRepository
+from aegis.providers.bingx.rest_client import BingXFuturesRestClient
+from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -57,3 +59,11 @@ def get_backtest_repo(request: Request) -> BacktestRepository:
 
 def get_candle_repo(request: Request) -> CandleRepository:
     return CandleRepository(request.app.state.pool)
+
+
+def get_binance_rest(request: Request) -> BinanceFuturesRestClient:
+    return request.app.state.binance_rest
+
+
+def get_bingx_rest(request: Request) -> BingXFuturesRestClient:
+    return request.app.state.bingx_rest
