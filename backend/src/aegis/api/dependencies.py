@@ -10,8 +10,11 @@ from fastapi import Request
 from aegis.config import Settings
 from aegis.db.backtest_repository import BacktestRepository
 from aegis.db.candle_repository import CandleRepository
+from aegis.db.derivatives_repository import DerivativesRepository
 from aegis.db.kill_switch_repository import KillSwitchRepository
 from aegis.db.events_repository import EventsRepository
+from aegis.db.liquidation_repository import LiquidationRepository
+from aegis.db.macro_repository import MacroRepository
 from aegis.db.momentum_repository import MomentumRepository
 from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
@@ -67,3 +70,15 @@ def get_binance_rest(request: Request) -> BinanceFuturesRestClient:
 
 def get_bingx_rest(request: Request) -> BingXFuturesRestClient:
     return request.app.state.bingx_rest
+
+
+def get_derivatives_repo(request: Request) -> DerivativesRepository:
+    return DerivativesRepository(request.app.state.pool)
+
+
+def get_liquidation_repo(request: Request) -> LiquidationRepository:
+    return LiquidationRepository(request.app.state.pool)
+
+
+def get_macro_repo(request: Request) -> MacroRepository:
+    return MacroRepository(request.app.state.pool)

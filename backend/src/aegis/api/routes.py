@@ -20,8 +20,11 @@ from aegis.api.dependencies import (
     get_bingx_rest,
     get_binance_rest,
     get_candle_repo,
+    get_derivatives_repo,
     get_events_repo,
     get_kill_switch_repo,
+    get_liquidation_repo,
+    get_macro_repo,
     get_momentum_repo,
     get_news_repo,
     get_paper_repo,
@@ -32,8 +35,11 @@ from aegis.api.dependencies import (
 from aegis.config import Settings
 from aegis.db.backtest_repository import BacktestRepository
 from aegis.db.candle_repository import CandleRepository
+from aegis.db.derivatives_repository import DerivativesRepository
 from aegis.db.events_repository import EventsRepository
 from aegis.db.kill_switch_repository import KillSwitchRepository
+from aegis.db.liquidation_repository import LiquidationRepository
+from aegis.db.macro_repository import MacroRepository
 from aegis.db.momentum_repository import MomentumRepository
 from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
@@ -306,6 +312,17 @@ async def get_backtests(limit: int = 20, backtest_repo: BacktestRepository = Dep
     return {"runs": await backtest_repo.fetch_recent_runs(limit=limit)}
 
 
+@router.get("/backtests/{run_id}/trades")
+async def get_backtest_trades(run_id: int, backtest_repo: BacktestRepository = Depends(get_backtest_repo)) -> dict:
+    """Trade-level drill-down for one backtest run - `fetch_recent_runs`
+    only returns aggregate stats (win rate, net PnL); this is every
+    individual simulated trade behind that number."""
+    run = await backtest_repo.fetch_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"backtest run {run_id} not found")
+    return {"run": run, "trades": await backtest_repo.fetch_trades(run_id)}
+
+
 # -- kill switch ------------------------------------------------------------
 @router.get("/kill-switch/{account_id}/events")
 async def get_kill_switch_events(
@@ -357,6 +374,76 @@ async def get_system_health(
                 "age_seconds": age_seconds, "stale": age_seconds > _stale_threshold_seconds(interval),
             })
     return {"candles": rows}
+
+
+# -- market intelligence (Macro / Derivatives / Liquidation Engines) ------------
+# These three engines have been running and persisting real data since
+# Fase 4/4b/5 but had NO dashboard exposure at all until now - found during
+# a full audit of every repository against what the API actually surfaced.
+def _df_last_row(df) -> dict | None:
+    """Converts a pandas DataFrame's last row into a plain, JSON-safe dict
+    (numpy scalars -> Python scalars, Timestamps -> ISO strings) - the
+    repositories below return DataFrames (built for the analytics/z-score
+    math), not the plain dicts every other endpoint here already returns."""
+    if df.empty:
+        return None
+    row = df.iloc[-1]
+    out: dict = {}
+    for key, value in row.items():
+        if hasattr(value, "isoformat"):
+            out[key] = value.isoformat()
+        elif hasattr(value, "item"):
+            out[key] = value.item()
+        else:
+            out[key] = value
+    return out
+
+
+@router.get("/market/macro")
+async def get_macro_snapshot(macro_repo: MacroRepository = Depends(get_macro_repo)) -> dict:
+    return {"series": await macro_repo.fetch_all_snapshots()}
+
+
+@router.get("/market/derivatives")
+async def get_derivatives_summary(
+    settings: Settings = Depends(get_settings_dep),
+    derivatives_repo: DerivativesRepository = Depends(get_derivatives_repo),
+) -> dict:
+    period = settings.derivatives_periods[0] if settings.derivatives_periods else "5m"
+    rows = []
+    for symbol in settings.symbols:
+        funding = _df_last_row(await derivatives_repo.fetch_funding_series(symbol, limit=1))
+        open_interest = _df_last_row(await derivatives_repo.fetch_open_interest_series(symbol, period, limit=1))
+        long_short = _df_last_row(await derivatives_repo.fetch_long_short_series(symbol, "GLOBAL_ACCOUNT", period, limit=1))
+        rows.append({
+            "symbol": symbol,
+            "funding_rate": funding.get("funding_rate") if funding else None,
+            "mark_price": funding.get("mark_price") if funding else None,
+            "open_interest": open_interest.get("sum_open_interest") if open_interest else None,
+            "long_short_ratio": long_short.get("long_short_ratio") if long_short else None,
+        })
+    return {"period": period, "symbols": rows}
+
+
+@router.get("/market/liquidations")
+async def get_liquidations_summary(
+    settings: Settings = Depends(get_settings_dep),
+    liquidation_repo: LiquidationRepository = Depends(get_liquidation_repo),
+) -> dict:
+    """Trailing-1h aggregate (12 x 5-minute buckets) per symbol - a
+    dashboard summary, not the full windowed series `fetch_windowed_stats`
+    exists to feed the Liquidation Engine's own z-score/acceleration math."""
+    rows = []
+    for symbol in settings.symbols:
+        df = await liquidation_repo.fetch_windowed_stats(symbol, window_seconds=300, num_buckets=12)
+        rows.append({
+            "symbol": symbol,
+            "long_notional": float(df["long_notional"].sum()) if not df.empty else 0.0,
+            "short_notional": float(df["short_notional"].sum()) if not df.empty else 0.0,
+            "long_count": int(df["long_count"].sum()) if not df.empty else 0,
+            "short_count": int(df["short_count"].sum()) if not df.empty else 0,
+        })
+    return {"window_minutes": 60, "symbols": rows}
 
 
 def _stale_threshold_seconds(interval: str) -> float:

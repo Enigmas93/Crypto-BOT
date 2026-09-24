@@ -235,6 +235,54 @@ async def test_kill_switch_events_requires_a_known_account(client):
 
 
 @pytest.mark.asyncio
+async def test_backtest_trades_404s_for_an_unknown_run(client):
+    resp = await client.get("/api/backtests/999999999/trades")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_backtest_trades_returns_run_and_trades_for_a_real_run(client):
+    recent = await client.get("/api/backtests", params={"limit": 1})
+    runs = recent.json()["runs"]
+    if not runs:
+        pytest.skip("no backtest runs persisted in this environment")
+    run_id = runs[0]["id"]
+    resp = await client.get(f"/api/backtests/{run_id}/trades")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run"]["id"] == run_id
+    assert isinstance(body["trades"], list)
+
+
+@pytest.mark.asyncio
+async def test_market_macro_returns_a_list(client):
+    resp = await client.get("/api/market/macro")
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["series"], list)
+
+
+@pytest.mark.asyncio
+async def test_market_derivatives_covers_every_configured_symbol(client):
+    settings = get_settings()
+    resp = await client.get("/api/market/derivatives")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {s["symbol"] for s in body["symbols"]} == set(settings.symbols)
+
+
+@pytest.mark.asyncio
+async def test_market_liquidations_covers_every_configured_symbol(client):
+    settings = get_settings()
+    resp = await client.get("/api/market/liquidations")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {s["symbol"] for s in body["symbols"]} == set(settings.symbols)
+    for s in body["symbols"]:
+        assert s["long_notional"] >= 0
+        assert s["short_notional"] >= 0
+
+
+@pytest.mark.asyncio
 async def test_kill_switch_reset_requires_a_known_account(client):
     resp = await client.post("/api/kill-switch/not_a_real_account/reset", json={"note": "test"})
     assert resp.status_code == 404

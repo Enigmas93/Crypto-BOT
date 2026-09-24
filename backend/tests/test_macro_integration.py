@@ -102,6 +102,33 @@ async def test_upsert_snapshot_replaces_the_single_row_per_series(pool):
 
 
 @pytest.mark.asyncio
+async def test_fetch_all_snapshots_joins_registry_and_latest_snapshot(pool):
+    repo = MacroRepository(pool)
+    series_id = _series_id()
+    await repo.upsert_series_registry([_config(series_id)])
+    snapshot = MacroSnapshot(series_id=series_id, as_of=date(2026, 3, 1), data_points=12, quality="OK",
+                              value=4.25, change_pct=0.5, yoy_pct_change=1.1, zscore_vs_trailing=0.3)
+    await repo.upsert_snapshot(snapshot)
+
+    rows = await repo.fetch_all_snapshots()
+    row = next(r for r in rows if r["series_id"] == series_id)
+    assert row["name"] == "Test Series"
+    assert row["value"] == pytest.approx(4.25)
+    assert row["quality"] == "OK"
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_snapshots_includes_series_with_no_snapshot_yet(pool):
+    repo = MacroRepository(pool)
+    series_id = _series_id()
+    await repo.upsert_series_registry([_config(series_id)])  # no upsert_snapshot call
+
+    rows = await repo.fetch_all_snapshots()
+    row = next(r for r in rows if r["series_id"] == series_id)
+    assert row["value"] is None  # LEFT JOIN - registered but not yet computed, not fabricated
+
+
+@pytest.mark.asyncio
 async def test_upsert_snapshot_skips_no_data(pool):
     repo = MacroRepository(pool)
     series_id = _series_id()

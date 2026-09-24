@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,19 +15,15 @@
   <div class="topbar">
     <div class="brand">
       <div class="brand-mark">A</div>
-      <div class="brand-text">
-        <h1>Aegis Quant</h1>
-        <div class="tagline">Trading Intelligence. Real Results.</div>
-      </div>
+      <div class="brand-text"><h1>AEGIS QUANT</h1><div class="tagline">Trading Intelligence · Real Results</div></div>
     </div>
     <div class="topbar-mid">
       <span class="status-dot"><span class="dot"></span>SYSTEM ONLINE</span>
       <span id="last-update" class="refresh-note">—</span>
-      <span class="badge warn">Ambiente: Testnet</span>
+      <span class="badge">AMBIENTE: TESTNET</span>
     </div>
     <div class="topbar-actions">
-      <div class="icon-btn" title="Notificações">&#128276;</div>
-      <div class="icon-btn" title="Configurações">&#9881;</div>
+      <div class="icon-btn" id="theme-toggle" title="Alternar tema claro/escuro">&#9789;</div>
       <div class="exchange-toggle">
         <button class="binance" data-exchange="binance">&#9670; BINANCE</button>
         <button class="bingx active" data-exchange="bingx">&#10060; BINGX</button>
@@ -37,163 +33,118 @@
 
   <!-- ============ TAB NAV ============ -->
   <div class="tabbar">
-    <button class="tab-btn" data-tab="overview">Overview</button>
-    <button class="tab-btn" data-tab="binance">Binance</button>
-    <button class="tab-btn active" data-tab="bingx">BingX</button>
-    <button class="tab-btn" data-tab="strategies">Strategies</button>
-    <button class="tab-btn" data-tab="positions">Positions</button>
-    <button class="tab-btn" data-tab="orders">Orders</button>
-    <button class="tab-btn" data-tab="risk">Risk &amp; Logs</button>
+    <button class="tab-btn" data-tab="overview">OVERVIEW</button>
+    <button class="tab-btn" data-tab="binance">BINANCE</button>
+    <button class="tab-btn active" data-tab="bingx">BINGX</button>
+    <button class="tab-btn" data-tab="strategies">STRATEGIES</button>
+    <button class="tab-btn" data-tab="positions">POSITIONS</button>
+    <button class="tab-btn" data-tab="orders">ORDERS</button>
+    <button class="tab-btn" data-tab="risk">RISK &amp; LOGS</button>
   </div>
 
   <div class="main">
 
     <!-- ============ OVERVIEW ============ -->
     <div class="view" id="view-overview">
-      <div class="kpi-row" id="overview-kpis"></div>
+      <div class="kpi-strip" id="overview-kpis"></div>
       <div class="grid full">
-        <div class="card">
-          <h2>Patrimônio — todas as contas</h2>
-          <div style="height:280px"><canvas id="overview-chart"></canvas></div>
-        </div>
+        <div class="card"><h2>Patrimônio — todas as contas</h2><div style="height:260px"><canvas id="overview-chart"></canvas></div></div>
       </div>
       <div class="grid full">
-        <div class="card">
-          <h2>Resumo por conta</h2>
-          <div class="table-scroll">
-            <table><thead><tr><th>Conta</th><th>Equity</th><th>PnL hoje</th><th>Drawdown</th><th>Perdas seg.</th><th>Posições</th><th>Kill Switch</th></tr></thead>
-              <tbody id="overview-accounts-table"></tbody></table>
-          </div>
+        <div class="card"><h2>Resumo por conta</h2>
+          <div class="table-scroll"><table><thead><tr><th>Conta</th><th>Equity</th><th>PnL hoje</th><th>Drawdown</th><th>Perdas seg.</th><th>Posições</th><th>Kill Switch</th></tr></thead>
+            <tbody id="overview-accounts-table"></tbody></table></div>
         </div>
       </div>
     </div>
 
-    <!-- ============ BINANCE / BINGX (shared template, two instances) ============ -->
+    <!-- ============ BINANCE / BINGX ============ -->
     <div class="view" id="view-binance">
-      <div class="card exchange-banner" id="banner-binance" style="margin-bottom:16px;">
+      <div class="panel exchange-banner" id="banner-binance" style="margin-bottom:14px">
         <div class="ex-icon binance">B</div>
-        <div class="ex-info">
-          <div class="name-row"><h2>BINANCE</h2><span class="pill-env" id="env-badge-binance">TESTNET</span></div>
-          <p>Ambiente de teste — execução real na Binance Futures</p>
-        </div>
-        <div class="stat-strip"></div>
+        <div class="ex-info"><div style="display:flex;align-items:center;gap:10px"><h2>BINANCE</h2><span class="pill-env">TESTNET</span></div><p>Espelhando 1:1 com a corretora</p></div>
+        <div class="kpi-strip-inline" style="display:flex;gap:14px;margin-left:auto;flex-wrap:wrap"></div>
       </div>
-
       <div class="grid g2">
-        <div class="card">
-          <h2>Performance (BINANCE — Testnet)
-            <span class="chart-tabs">
-              <button data-range="1D">1D</button><button data-range="7D" class="active">7D</button>
-              <button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">Todos</button>
-            </span>
-          </h2>
-          <div style="height:240px"><canvas id="chart-binance"></canvas></div>
-        </div>
-        <div class="card">
-          <h2>Atividade das Estratégias (BINANCE)</h2>
-          <div class="activity-list" id="activity-binance"></div>
-        </div>
-        <div class="card">
-          <h2>Estratégias (BINANCE)</h2>
-          <div class="grid full" id="strategies-binance" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin:0;"></div>
+        <div class="card"><h2>Performance
+            <span class="chart-tabs"><button data-range="1D">1D</button><button data-range="7D" class="active">7D</button><button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">TODOS</button></span>
+          </h2><div style="height:230px"><canvas id="chart-binance"></canvas></div></div>
+        <div class="card"><h2>Atividade das Estratégias</h2><div class="activity-list" id="activity-binance"></div></div>
+      </div>
+      <div class="grid full">
+        <div class="card"><h2>Resultado por Estratégia</h2><div class="grid full" id="strategies-binance" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:0"></div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card" style="grid-column:1/-1"><h2>Posições Abertas</h2>
+          <div class="table-scroll"><table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th><th>Mark</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
+            <tbody id="positions-table-binance"></tbody></table></div>
         </div>
       </div>
-
-      <div class="grid g2">
-        <div class="card" style="grid-column: span 2;">
-          <h2>Posições Abertas (BINANCE — Testnet)</h2>
-          <div class="table-scroll">
-            <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop Loss</th><th>Take Profit</th><th>Mark Price</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
-              <tbody id="positions-table-binance"></tbody></table>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Risk Monitor (BINANCE)</h2>
-          <div id="risk-binance"></div>
-        </div>
-        <div class="card">
-          <h2>Execução (BINANCE)</h2>
-          <div class="feed" id="feed-binance"></div>
-        </div>
+      <div class="grid g3">
+        <div class="card"><h2>Risk Monitor</h2><div id="risk-binance"></div></div>
+        <div class="card"><h2>Execução (log)</h2><div class="log-feed" id="feed-binance"></div></div>
+        <div class="card"><h2>Histórico</h2><div class="timeline" id="history-binance"></div></div>
       </div>
     </div>
 
     <div class="view active" id="view-bingx">
-      <div class="card exchange-banner" id="banner-bingx" style="margin-bottom:16px;">
+      <div class="panel exchange-banner" id="banner-bingx" style="margin-bottom:14px">
         <div class="ex-icon bingx">X</div>
-        <div class="ex-info">
-          <div class="name-row"><h2>BINGX</h2><span class="pill-env" id="env-badge-bingx">VST · TESTNET</span></div>
-          <p>Ambiente de teste — simulação de estratégias (VST)</p>
-        </div>
-        <div class="stat-strip"></div>
+        <div class="ex-info"><div style="display:flex;align-items:center;gap:10px"><h2>BINGX</h2><span class="pill-env">VST · TESTNET</span></div><p>Ambiente de simulação (VST)</p></div>
+        <div class="kpi-strip-inline" style="display:flex;gap:14px;margin-left:auto;flex-wrap:wrap"></div>
       </div>
-
       <div class="grid g2">
-        <div class="card">
-          <h2>Performance (BINGX — VST/Testnet)
-            <span class="chart-tabs">
-              <button data-range="1D">1D</button><button data-range="7D" class="active">7D</button>
-              <button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">Todos</button>
-            </span>
-          </h2>
-          <div style="height:240px"><canvas id="chart-bingx"></canvas></div>
-        </div>
-        <div class="card">
-          <h2>Atividade das Estratégias (BINGX)</h2>
-          <div class="activity-list" id="activity-bingx"></div>
-        </div>
-        <div class="card">
-          <h2>Estratégias (BINGX)</h2>
-          <div class="grid full" id="strategies-bingx" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin:0;"></div>
+        <div class="card"><h2>Performance
+            <span class="chart-tabs"><button data-range="1D">1D</button><button data-range="7D" class="active">7D</button><button data-range="30D">30D</button><button data-range="90D">90D</button><button data-range="Todos">TODOS</button></span>
+          </h2><div style="height:230px"><canvas id="chart-bingx"></canvas></div></div>
+        <div class="card"><h2>Atividade das Estratégias</h2><div class="activity-list" id="activity-bingx"></div></div>
+      </div>
+      <div class="grid full">
+        <div class="card"><h2>Resultado por Estratégia</h2><div class="grid full" id="strategies-bingx" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:0"></div></div>
+      </div>
+      <div class="grid g2">
+        <div class="card" style="grid-column:1/-1"><h2>Posições Abertas</h2>
+          <div class="table-scroll"><table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th><th>Mark</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
+            <tbody id="positions-table-bingx"></tbody></table></div>
         </div>
       </div>
-
-      <div class="grid g2">
-        <div class="card" style="grid-column: span 2;">
-          <h2>Posições Abertas (BINGX — VST/Testnet)</h2>
-          <div class="table-scroll">
-            <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop Loss</th><th>Take Profit</th><th>Mark Price</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
-              <tbody id="positions-table-bingx"></tbody></table>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Risk Monitor (BINGX)</h2>
-          <div id="risk-bingx"></div>
-        </div>
-        <div class="card">
-          <h2>Execução (BINGX)</h2>
-          <div class="feed" id="feed-bingx"></div>
-        </div>
+      <div class="grid g3">
+        <div class="card"><h2>Risk Monitor</h2><div id="risk-bingx"></div></div>
+        <div class="card"><h2>Execução (log)</h2><div class="log-feed" id="feed-bingx"></div></div>
+        <div class="card"><h2>Histórico</h2><div class="timeline" id="history-bingx"></div></div>
       </div>
     </div>
 
     <!-- ============ STRATEGIES ============ -->
     <div class="view" id="view-strategies">
       <div class="section-title">Todas as estratégias</div>
-      <div class="grid full" id="strategies-all" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));"></div>
+      <div class="grid full" id="strategies-all" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
     </div>
 
     <!-- ============ POSITIONS ============ -->
     <div class="view" id="view-positions">
-      <div class="card">
-        <h2>Todas as posições abertas</h2>
-        <div class="subtitle">Consolidado de todas as contas (Paper, Shadow, Shadow BingX, Momentum, Momentum BingX)</div>
-        <div class="table-scroll">
-          <table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop Loss</th><th>Take Profit</th><th>Mark Price</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
-            <tbody id="positions-table-all"></tbody></table>
-        </div>
+      <div class="card"><h2>Todas as posições abertas</h2>
+        <div class="subtitle">Consolidado de todas as contas — Paper, Shadow, Shadow BingX, Momentum, Momentum BingX</div>
+        <div class="table-scroll"><table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop</th><th>TP</th><th>Mark</th><th>PnL</th><th>Duração</th><th>Status</th></tr></thead>
+          <tbody id="positions-table-all"></tbody></table></div>
       </div>
     </div>
 
-    <!-- ============ ORDERS ============ -->
+    <!-- ============ ORDERS (histórico por estratégia) ============ -->
     <div class="view" id="view-orders">
       <div class="card">
-        <h2>Histórico de trades (execuções fechadas)</h2>
-        <div class="subtitle">Não há um log de ordens granular persistido (ordem submetida/atualizada) — esta tabela mostra cada trade já fechado, todas as contas, mais recente primeiro.</div>
-        <div class="table-scroll">
-          <table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>Fechado em</th></tr></thead>
-            <tbody id="orders-table"></tbody></table>
+        <h2>Histórico de Operações por Estratégia</h2>
+        <div class="subtitle">Filtre por conta para ver o histórico de trades daquela estratégia especificamente, ou veja tudo junto</div>
+        <div class="chip-row" id="orders-chips">
+          <span class="chip active" data-account="all" onclick="setOrdersFilter('all')">TODAS</span>
+          <span class="chip" data-account="paper" onclick="setOrdersFilter('paper')">PAPER</span>
+          <span class="chip" data-account="shadow" onclick="setOrdersFilter('shadow')">SHADOW</span>
+          <span class="chip" data-account="shadow_bingx" onclick="setOrdersFilter('shadow_bingx')">SHADOW BINGX</span>
+          <span class="chip" data-account="momentum" onclick="setOrdersFilter('momentum')">MOMENTUM</span>
+          <span class="chip" data-account="momentum_bingx" onclick="setOrdersFilter('momentum_bingx')">MOMENTUM BINGX</span>
         </div>
+        <div class="table-scroll"><table><thead><tr><th>Conta</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>Fechado em</th></tr></thead>
+          <tbody id="orders-table"></tbody></table></div>
       </div>
     </div>
 
@@ -202,47 +153,43 @@
       <div class="section-title">Risco por conta</div>
       <div class="grid g4" id="risk-logs-accounts"></div>
 
-      <div class="section-title">Saúde dos dados</div>
-      <div class="grid full">
-        <div class="card">
-          <table><thead><tr><th>Símbolo</th><th>Intervalo</th><th>Último candle</th><th>Status</th></tr></thead>
-            <tbody id="health-table"></tbody></table>
-        </div>
-      </div>
-
-      <div class="section-title">Notícias e eventos</div>
+      <div class="section-title">Inteligência de Mercado</div>
       <div class="grid g3">
-        <div class="card">
-          <h2>Status por ativo</h2>
-          <table><thead><tr><th>Ativo</th><th>Status</th><th>Fontes</th><th>Sentimento</th></tr></thead>
-            <tbody id="news-status-table"></tbody></table>
+        <div class="card"><h2>Macro (FRED/BLS/BEA)</h2>
+          <div class="table-scroll"><table><thead><tr><th>Série</th><th>Valor</th><th>Var.</th><th>Data</th><th>Qualidade</th></tr></thead>
+            <tbody id="macro-table"></tbody></table></div>
         </div>
-        <div class="card">
-          <h2>Feed recente</h2>
-          <table><thead><tr><th>Fonte</th><th>Título</th><th>Sentimento</th></tr></thead>
-            <tbody id="news-recent-table"></tbody></table>
+        <div class="card"><h2>Derivativos</h2>
+          <div class="table-scroll"><table><thead><tr><th>Símbolo</th><th>Funding</th><th>Open Interest</th><th>Long/Short</th></tr></thead>
+            <tbody id="derivatives-table"></tbody></table></div>
         </div>
-        <div class="card">
-          <h2>Próximos eventos (CoinMarketCal)</h2>
-          <table><thead><tr><th>Quando</th><th>Evento</th><th>Ativos</th></tr></thead>
-            <tbody id="events-table"></tbody></table>
+        <div class="card"><h2>Liquidações (1h)</h2>
+          <div class="table-scroll"><table><thead><tr><th>Símbolo</th><th>Longs liq.</th><th>Shorts liq.</th><th>Eventos</th></tr></thead>
+            <tbody id="liquidations-table"></tbody></table></div>
         </div>
       </div>
 
-      <div class="section-title">Backtests recentes</div>
-      <div class="grid full">
-        <div class="card">
-          <table><thead><tr><th>Símbolo</th><th>Trades</th><th>Win Rate</th><th>PnL líq.</th><th>Kill Switch</th></tr></thead>
-            <tbody id="backtests-table"></tbody></table>
-        </div>
+      <div class="section-title">Saúde dos dados</div>
+      <div class="grid full"><div class="card"><table><thead><tr><th>Símbolo</th><th>Intervalo</th><th>Último candle</th><th>Status</th></tr></thead>
+        <tbody id="health-table"></tbody></table></div></div>
+
+      <div class="section-title">Notícias e Eventos</div>
+      <div class="grid g3">
+        <div class="card"><h2>Status por ativo</h2><table><thead><tr><th>Ativo</th><th>Status</th><th>Fontes</th><th>Sentimento</th></tr></thead><tbody id="news-status-table"></tbody></table></div>
+        <div class="card"><h2>Feed recente</h2><table><thead><tr><th>Fonte</th><th>Título</th><th>Sentimento</th></tr></thead><tbody id="news-recent-table"></tbody></table></div>
+        <div class="card"><h2>Próximos eventos (CoinMarketCal)</h2><table><thead><tr><th>Quando</th><th>Evento</th><th>Ativos</th></tr></thead><tbody id="events-table"></tbody></table></div>
       </div>
+
+      <div class="section-title">Backtests <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-faint)">(clique numa linha para ver os trades)</span></div>
+      <div class="grid full"><div class="card"><table><thead><tr><th>Símbolo</th><th>Trades</th><th>Win Rate</th><th>PnL líq.</th><th>Kill Switch</th><th>Data</th></tr></thead>
+        <tbody id="backtests-table"></tbody></table></div></div>
     </div>
 
   </div>
 
   <div class="footer">
-    <span>Aegis Quant v1.0.0 · Trading Bot de Criptomoedas</span>
-    <span id="footer-status">Testnet · atualiza a cada 10s</span>
+    <span>AEGIS QUANT v1.0.0 · TRADING BOT DE CRIPTOMOEDAS</span>
+    <span>TESTNET · ATUALIZA A CADA 10S</span>
   </div>
 </div>
 

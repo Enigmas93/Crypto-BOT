@@ -67,6 +67,23 @@ class MacroRepository:
         df = pd.DataFrame([dict(r) for r in rows], columns=["date", "value"])
         return df.iloc[::-1].reset_index(drop=True)
 
+    async def fetch_all_snapshots(self) -> list[dict]:
+        """One row per tracked series - its latest computed snapshot
+        joined with the registry's name/description/importance, for a
+        dashboard summary. `macro_snapshots` is upserted (one row per
+        series_id), so this is always "as of now", never a history."""
+        query = """
+            SELECT s.series_id, s.name, s.description, s.importance,
+                   sn.as_of, sn.value, sn.change_pct, sn.yoy_pct_change,
+                   sn.zscore_vs_trailing, sn.quality
+            FROM macro_series s
+            LEFT JOIN macro_snapshots sn ON sn.series_id = s.series_id
+            ORDER BY s.importance DESC, s.series_id
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query)
+        return [dict(r) for r in rows]
+
     async def upsert_snapshot(self, snapshot: MacroSnapshot) -> None:
         if snapshot.as_of is None:  # NO_DATA - nothing to store
             return

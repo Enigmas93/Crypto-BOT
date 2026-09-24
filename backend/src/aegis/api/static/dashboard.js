@@ -1,13 +1,9 @@
-/* Aegis Quant Dashboard (Fase 16 redesign) - vanilla JS, no build step,
- * matches the rest of this project's "plain HTML/CSS/JS served as a
- * static file" approach. Chart.js is the one external dependency, loaded
- * via CDN in index.html.
- *
+/* Aegis Quant Dashboard — Console Tático layout (Fase 16).
+ * Vanilla JS, no build step. Chart.js (CDN) is the one external dependency.
  * Every number rendered here comes from a real backend endpoint
- * (aegis/api/routes.py) backed by real persisted data or a live exchange
- * call - nothing in this file invents or simulates a value. Where a
- * metric genuinely isn't available (e.g. Paper has no live exchange
- * position to check), the UI shows "—", never a guess.
+ * (aegis/api/routes.py) backed by persisted data or a live exchange call -
+ * nothing here invents or simulates a value. Where a metric genuinely isn't
+ * available, the UI shows "—", never a guess.
  */
 
 // -- account/exchange metadata --------------------------------------------
@@ -23,13 +19,12 @@ const EXCHANGE_ACCOUNTS = {
   bingx: ["paper", "shadow_bingx", "momentum_bingx"],
 };
 const ACCENT_COLORS = {
-  paper: "#a78bfa", shadow: "#3b82f6", shadow_bingx: "#2b6bff",
-  momentum: "#f59e0b", momentum_bingx: "#22c55e",
+  paper: "#a78bfa", shadow: "#f0b90b", shadow_bingx: "#2b6bff",
+  momentum: "#f0b90b", momentum_bingx: "#2bffa3",
 };
 
 // -- tiny helpers ------------------------------------------------------
 const el = (id) => document.getElementById(id);
-const qs = (sel, root = document) => root.querySelector(sel);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function escapeHtml(s) {
@@ -52,8 +47,7 @@ function fmtNum(v, digits = 4) {
 }
 function fmtTime(iso) {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 function fmtClock(iso) {
   if (!iso) return "—";
@@ -75,17 +69,37 @@ async function getJSON(url) {
   return r.json();
 }
 
+// -- theme (dark Console Tático default, light "claro" variant) ------------
+function initTheme() {
+  let saved = "dark";
+  try { saved = localStorage.getItem("aegis-theme") || "dark"; } catch (e) { /* private mode etc - default stands */ }
+  document.documentElement.setAttribute("data-theme", saved);
+  updateThemeBtn(saved);
+}
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  updateThemeBtn(next);
+  try { localStorage.setItem("aegis-theme", next); } catch (e) { /* ignore - per-viewer convenience only */ }
+}
+function updateThemeBtn(theme) {
+  const btn = el("theme-toggle");
+  if (btn) btn.textContent = theme === "dark" ? "☀" : "☾"; // sun / moon
+}
+
 // -- state ------------------------------------------------------------
-let activeExchange = "bingx"; // matches the mockup's default focus
+let activeExchange = "bingx";
 let activeTab = "overview";
 let chartRange = "7D";
-const charts = {}; // canvasId -> Chart.js instance
+let ordersFilter = "all"; // account_id or "all"
+let expandedBacktestRun = null;
+const charts = {};
 
-// -- data cache (refreshed on each poll) --------------------------------
 let cache = {
   overview: { accounts: {} },
   positions: {},
-  equityHistory: {}, // account -> {points:[...]}
+  equityHistory: {},
   journal: { entries: [] },
   momentumScan: { candidates: [] },
   newsAssetStatus: { statuses: [] },
@@ -93,6 +107,11 @@ let cache = {
   eventsUpcoming: { events: [] },
   backtests: { runs: [] },
   health: { candles: [] },
+  macro: { series: [] },
+  derivatives: { symbols: [] },
+  liquidations: { symbols: [] },
+  killSwitchEvents: {}, // account_id -> events[]
+  tradesByAccount: {}, // account_id -> trades[]
 };
 
 // -- tab / exchange switching --------------------------------------------
@@ -112,29 +131,24 @@ function setActiveExchange(ex) {
 // -- overview tab --------------------------------------------------------
 function renderOverviewTab() {
   const accounts = cache.overview.accounts || {};
-  let totalEquity = 0, totalPnl = 0, openPositions = 0, activeKillSwitches = 0, anyInit = false;
+  let totalEquity = 0, totalPnl = 0, openPositions = 0, activeKillSwitches = 0;
   for (const id of Object.keys(ACCOUNTS)) {
     const a = accounts[id];
     if (!a || !a.initialized) continue;
-    anyInit = true;
     totalEquity += a.equity;
     totalPnl += a.daily_realized_pnl;
     openPositions += a.open_positions_count;
     if (a.kill_switch.is_triggered) activeKillSwitches++;
   }
-  const kpiRow = el("overview-kpis");
-  kpiRow.innerHTML = `
-    <div class="kpi-card"><div class="lbl">Patrimônio total</div><div class="val">${fmtMoney(totalEquity)}</div>
-      <div class="sub ${totalPnl >= 0 ? "up" : "down"}">${totalPnl >= 0 ? "▲" : "▼"} ${fmtMoney(totalPnl)} hoje</div></div>
-    <div class="kpi-card"><div class="lbl">Posições abertas</div><div class="val">${openPositions}</div>
-      <div class="sub" style="color:var(--text-faint)">em ${Object.keys(ACCOUNTS).length} contas</div></div>
-    <div class="kpi-card"><div class="lbl">Kill Switches ativos</div><div class="val ${activeKillSwitches ? "down" : "up"}">${activeKillSwitches}</div>
-      <div class="sub" style="color:var(--text-faint)">${activeKillSwitches ? "verifique Risk & Logs" : "tudo normal"}</div></div>
-    <div class="kpi-card"><div class="lbl">Contas inicializadas</div><div class="val">${anyInit ? Object.values(accounts).filter(a => a.initialized).length : 0}/${Object.keys(ACCOUNTS).length}</div>
-      <div class="sub" style="color:var(--text-faint)">Paper · Shadow · Shadow BingX · Momentum · Momentum BingX</div></div>
+  el("overview-kpis").innerHTML = `
+    <div class="kpi-tile accent"><div class="lbl">Patrimônio total</div><div class="val">${fmtMoney(totalEquity)}</div></div>
+    <div class="kpi-tile"><div class="lbl">PnL do dia</div><div class="val ${totalPnl >= 0 ? "up" : "down"}">${fmtMoney(totalPnl)}</div></div>
+    <div class="kpi-tile"><div class="lbl">Posições abertas</div><div class="val">${openPositions}</div></div>
+    <div class="kpi-tile"><div class="lbl">Kill switches ativos</div><div class="val ${activeKillSwitches ? "down" : "up"}">${activeKillSwitches}</div></div>
+    <div class="kpi-tile"><div class="lbl">Contas inicializadas</div><div class="val">${Object.values(accounts).filter((a) => a && a.initialized).length}/${Object.keys(ACCOUNTS).length}</div></div>
+    <div class="kpi-tile"><div class="lbl">Risco geral</div><div class="val ${activeKillSwitches ? "down" : "up"}">${activeKillSwitches ? "ATENÇÃO" : "NORMAL"}</div></div>
   `;
-
-  renderMultiEquityChart("overview-chart", Object.keys(ACCOUNTS));
+  renderComboChart("overview-chart", Object.keys(ACCOUNTS));
   renderAccountSummaryTable("overview-accounts-table");
   renderHealth();
 }
@@ -143,26 +157,22 @@ function renderAccountSummaryTable(tbodyId) {
   const accounts = cache.overview.accounts || {};
   const tbody = el(tbodyId);
   if (!tbody) return;
-  const rows = Object.keys(ACCOUNTS).map((id) => {
+  tbody.innerHTML = Object.keys(ACCOUNTS).map((id) => {
     const a = accounts[id];
     const meta = ACCOUNTS[id];
-    if (!a || !a.initialized) {
-      return `<tr><td>${meta.label}</td><td colspan="6" class="empty">Ainda não inicializada</td></tr>`;
-    }
+    if (!a || !a.initialized) return `<tr><td>${meta.label}</td><td colspan="6" class="empty">Ainda não inicializada</td></tr>`;
     const ddClass = a.drawdown_pct > 0.075 ? "crit" : a.drawdown_pct > 0.05 ? "warn" : "ok";
-    const ks = a.kill_switch.is_triggered
-      ? `<span class="pill crit">Disparado</span>` : `<span class="pill ok">Normal</span>`;
+    const ks = a.kill_switch.is_triggered ? `<span class="pill crit">DISPARADO</span>` : `<span class="pill ok">NORMAL</span>`;
     return `<tr>
-      <td><span class="pill open" style="background:transparent;color:var(--text);font-weight:700;">${meta.label}</span></td>
-      <td class="mono">${fmtMoney(a.equity)}</td>
-      <td class="mono ${a.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(a.daily_realized_pnl)}</td>
+      <td style="font-weight:700">${meta.label}</td>
+      <td class="num">${fmtMoney(a.equity)}</td>
+      <td class="num ${a.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(a.daily_realized_pnl)}</td>
       <td><span class="pill ${ddClass}">${fmtPct(a.drawdown_pct)}</span></td>
-      <td class="mono">${a.consecutive_losses}</td>
-      <td class="mono">${a.open_positions_count}</td>
+      <td class="num">${a.consecutive_losses}</td>
+      <td class="num">${a.open_positions_count}</td>
       <td>${ks}</td>
     </tr>`;
   }).join("");
-  tbody.innerHTML = rows;
 }
 
 // -- exchange view (binance/bingx tabs) -----------------------------------
@@ -173,88 +183,100 @@ function renderExchangeView(exchange) {
   const primary = accounts[primaryAccountId];
 
   renderExchangeBanner(exchange, primary);
-  renderMultiEquityChart(`chart-${exchange}`, accountIds);
+  // Rich single-account combo chart (equity line + per-trade PnL bars) for
+  // the exchange's primary real-money-track account - matches the
+  // Console Tático reference more closely than a flattened 3-line
+  // comparison would; the Overview tab still shows all 5 accounts together.
+  renderComboChart(`chart-${exchange}`, [primaryAccountId]);
   renderActivityList(`activity-${exchange}`, accountIds);
   renderStrategyGrid(`strategies-${exchange}`, accountIds);
-  renderPositionsTable(`positions-table-${exchange}`, exchange === "binance" ? ["shadow", "momentum"] : ["shadow_bingx", "momentum_bingx"]);
+  const realAccounts = exchange === "binance" ? ["shadow", "momentum"] : ["shadow_bingx", "momentum_bingx"];
+  renderPositionsTable(`positions-table-${exchange}`, realAccounts, false);
   renderRiskMonitor(`risk-${exchange}`, primaryAccountId);
-  renderExecutionFeed(`feed-${exchange}`, accountIds);
+  renderLogFeed(`feed-${exchange}`, accountIds);
+  renderTimeline(`history-${exchange}`, accountIds);
 }
 
 function renderExchangeBanner(exchange, account) {
   const root = el(`banner-${exchange}`);
   if (!root) return;
-  const label = exchange === "binance" ? "Binance" : "BingX";
   const envLabel = exchange === "binance" ? "TESTNET" : "VST · TESTNET";
+  const strip = root.querySelector(".kpi-strip-inline");
   if (!account || !account.initialized) {
-    root.querySelector(".stat-strip").innerHTML = `<div class="stat"><div class="lbl">Status</div><div class="val">Conta ainda não inicializada</div></div>`;
+    strip.innerHTML = `<div class="kpi-tile"><div class="lbl">Status</div><div class="val">Não inicializada</div></div>`;
     return;
   }
   const dd = account.drawdown_pct;
   const ddClass = dd > 0.075 ? "down" : dd > 0.05 ? "" : "up";
-  root.querySelector(".stat-strip").innerHTML = `
-    <div class="stat"><div class="lbl">Patrimônio</div><div class="val">${fmtMoney(account.equity)}</div></div>
-    <div class="stat"><div class="lbl">Pico</div><div class="val">${fmtMoney(account.peak_equity)}</div></div>
-    <div class="stat"><div class="lbl">PnL do dia</div><div class="val ${account.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(account.daily_realized_pnl)}</div></div>
-    <div class="stat"><div class="lbl">Drawdown</div><div class="val ${ddClass}">${fmtPct(dd)}</div></div>
-    <div class="stat"><div class="lbl">Posições abertas</div><div class="val">${account.open_positions_count}</div></div>
-    <div class="stat"><div class="lbl">Perdas seguidas</div><div class="val">${account.consecutive_losses}</div></div>
-    <div class="stat"><div class="lbl">Risco</div><div class="val ${account.kill_switch.is_triggered ? "down" : "up"}">${account.kill_switch.is_triggered ? "DISPARADO" : "NORMAL"}</div></div>
+  const risky = account.kill_switch.is_triggered;
+  strip.innerHTML = `
+    <div class="kpi-tile accent"><div class="lbl">Patrimônio</div><div class="val">${fmtMoney(account.equity)}</div></div>
+    <div class="kpi-tile"><div class="lbl">PnL do dia</div><div class="val ${account.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(account.daily_realized_pnl)}</div></div>
+    <div class="kpi-tile"><div class="lbl">Drawdown</div><div class="val ${ddClass}">${fmtPct(dd)}</div></div>
+    <div class="kpi-tile"><div class="lbl">Posições abertas</div><div class="val">${account.open_positions_count}</div></div>
+    <div class="kpi-tile"><div class="lbl">Perdas seguidas</div><div class="val">${account.consecutive_losses}</div></div>
+    <div class="kpi-tile ${risky ? "" : ""}"><div class="lbl">Risco</div><div class="val ${risky ? "down" : "up"}">${risky ? "ATENÇÃO" : "NORMAL"}</div></div>
   `;
-  qs(`#env-badge-${exchange}`).textContent = envLabel;
+  root.querySelector(".pill-env").textContent = envLabel;
 }
 
-// -- equity chart (Chart.js) ----------------------------------------------
+// -- combo chart: equity (line) + daily pnl (bars) + drawdown (dashed) -----
 const RANGE_MS = { "1D": 864e5, "7D": 7 * 864e5, "30D": 30 * 864e5, "90D": 90 * 864e5, Todos: Infinity };
 
 function filterByRange(points) {
-  // points[0] is always the "seed" (starting equity, closed_at=null) -
-  // real trade points follow in chronological order.
   const seed = points[0];
   const real = points.slice(1);
   const isUnbounded = !Number.isFinite(RANGE_MS[chartRange]);
   const cutoff = Date.now() - RANGE_MS[chartRange];
   const filteredReal = isUnbounded ? real : real.filter((p) => new Date(p.closed_at).getTime() >= cutoff);
-  // The seed point needs a real x-value to plot (its own closed_at is
-  // null, by definition, since it's before any trade) - anchored just
-  // before the first real point shown, or one day back if there is no
-  // trade history at all yet, never Infinity/NaN.
-  const anchorMs = filteredReal.length
-    ? new Date(filteredReal[0].closed_at).getTime() - 3600_000
-    : Date.now() - 864e5;
+  const anchorMs = filteredReal.length ? new Date(filteredReal[0].closed_at).getTime() - 3600_000 : Date.now() - 864e5;
   return [{ ...seed, x: new Date(anchorMs) }, ...filteredReal.map((p) => ({ ...p, x: new Date(p.closed_at) }))];
 }
 
-function renderMultiEquityChart(canvasId, accountIds) {
+function renderComboChart(canvasId, accountIds) {
   const canvas = el(canvasId);
   if (!canvas) return;
-  const datasets = accountIds.map((id) => {
+  const isMulti = accountIds.length > 1;
+  const datasets = [];
+
+  accountIds.forEach((id) => {
     const hist = cache.equityHistory[id];
     const points = hist && hist.points ? filterByRange(hist.points) : [];
-    return {
-      label: ACCOUNTS[id].label,
+    datasets.push({
+      type: "line", label: `${ACCOUNTS[id].label} — patrimônio`,
       data: points.map((p) => ({ x: p.x, y: p.equity })),
-      borderColor: ACCENT_COLORS[id],
-      backgroundColor: ACCENT_COLORS[id] + "22",
-      borderWidth: 2, pointRadius: 0, tension: 0.25, fill: accountIds.length === 1,
-    };
+      borderColor: ACCENT_COLORS[id], backgroundColor: ACCENT_COLORS[id] + "22",
+      borderWidth: 2, pointRadius: 0, tension: 0.2, fill: !isMulti, yAxisID: "y",
+    });
+    if (!isMulti) {
+      datasets.push({
+        type: "bar", label: `${ACCOUNTS[id].label} — PnL do trade`,
+        data: points.slice(1).map((p) => ({ x: p.x, y: p.net_pnl })),
+        backgroundColor: points.slice(1).map((p) => (p.net_pnl >= 0 ? "#2bffa355" : "#ff4d6a55")),
+        yAxisID: "y1", barThickness: 6,
+      });
+    }
   });
+
   if (charts[canvasId]) {
     charts[canvasId].data.datasets = datasets;
     charts[canvasId].update("none");
     return;
   }
+  const rootStyles = getComputedStyle(document.documentElement);
+  const gridColor = rootStyles.getPropertyValue("--border").trim() || "#163027";
+  const tickColor = rootStyles.getPropertyValue("--text-faint").trim() || "#4a6b5c";
   charts[canvasId] = new Chart(canvas.getContext("2d"), {
-    type: "line",
     data: { datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { type: "time", time: { unit: chartRange === "1D" ? "hour" : "day" }, grid: { color: "#171d33" }, ticks: { color: "#6b7796", maxTicksLimit: 8 } },
-        y: { grid: { color: "#171d33" }, ticks: { color: "#6b7796" } },
+        x: { type: "time", time: { unit: chartRange === "1D" ? "hour" : "day" }, grid: { color: gridColor }, ticks: { color: tickColor, maxTicksLimit: 8, font: { family: "JetBrains Mono", size: 10 } } },
+        y: { position: "left", grid: { color: gridColor }, ticks: { color: tickColor, font: { family: "JetBrains Mono", size: 10 } } },
+        y1: { position: "right", grid: { display: false }, ticks: { color: tickColor, font: { family: "JetBrains Mono", size: 10 } }, display: !isMulti },
       },
-      plugins: { legend: { display: accountIds.length > 1, labels: { color: "#a3adc7", boxWidth: 10, font: { size: 10.5 } } } },
+      plugins: { legend: { display: true, labels: { color: tickColor, boxWidth: 10, font: { size: 10, family: "JetBrains Mono" } } } },
     },
   });
 }
@@ -273,11 +295,7 @@ function renderSparkline(canvasId, accountId, color) {
   charts[canvasId] = new Chart(canvas.getContext("2d"), {
     type: "line",
     data: { labels: data.map((_, i) => i), datasets: [{ data, borderColor: color, borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: false }] },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      scales: { x: { display: false }, y: { display: false } },
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-    },
+    options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { x: { display: false }, y: { display: false } }, plugins: { legend: { display: false }, tooltip: { enabled: false } } },
   });
 }
 
@@ -285,6 +303,19 @@ function setChartRange(range) {
   chartRange = range;
   qsa(".chart-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.range === range));
   renderAll();
+}
+
+// -- radial risk gauge (SVG, no chart lib needed) --------------------------
+function radialGaugeSvg(pct, label, sublabel) {
+  const r = 54, c = 2 * Math.PI * r;
+  const offset = c * (1 - Math.min(1, Math.max(0, pct)));
+  const color = pct > 0.85 ? "var(--red)" : pct > 0.6 ? "var(--amber)" : "var(--accent)";
+  return `<svg viewBox="0 0 140 140" width="140" height="140">
+    <circle cx="70" cy="70" r="${r}" fill="none" stroke="var(--border)" stroke-width="11"/>
+    <circle cx="70" cy="70" r="${r}" fill="none" stroke="${color}" stroke-width="11" stroke-dasharray="${c}" stroke-dashoffset="${offset}" stroke-linecap="round" transform="rotate(-90 70 70)"/>
+    <text x="70" y="66" text-anchor="middle" fill="var(--text)" font-size="22" font-weight="700" font-family="JetBrains Mono">${label}</text>
+    <text x="70" y="84" text-anchor="middle" fill="var(--text-faint)" font-size="9" font-family="JetBrains Mono">${sublabel}</text>
+  </svg>`;
 }
 
 // -- activity list ------------------------------------------------------
@@ -297,9 +328,7 @@ function renderActivityList(elId, accountIds) {
     const meta = ACCOUNTS[id];
     const account = accounts[id];
     const openCount = (positions[id] || []).length;
-    let dotClass = "";
-    let statusText = "Aguardando sinal...";
-    let pct = null;
+    let dotClass = "", statusText = "Aguardando sinal...", pct = null;
     if (account && account.initialized) {
       pct = account.equity ? account.daily_realized_pnl / account.equity : 0;
       if (openCount > 0) { dotClass = "active"; statusText = "Operação em andamento"; }
@@ -307,11 +336,8 @@ function renderActivityList(elId, accountIds) {
       else { statusText = "Sem operações"; }
     }
     const pctHtml = pct === null ? "" : `<div class="pct ${pct >= 0 ? "up" : "down"}">${pct >= 0 ? "+" : ""}${fmtPct(pct, 2)}</div>`;
-    return `<div class="activity-row">
-      <div class="dot ${dotClass}"></div>
-      <div class="info"><div class="t">${meta.label}</div><div class="s">${statusText}</div></div>
-      ${pctHtml}
-    </div>`;
+    return `<div class="activity-row"><div class="dot ${dotClass}"></div>
+      <div class="info"><div class="t">${meta.label}</div><div class="s">${statusText}</div></div>${pctHtml}</div>`;
   }).join("");
 }
 
@@ -326,151 +352,174 @@ function renderStrategyGrid(elId, accountIds) {
     const equity = a && a.initialized ? fmtMoney(a.equity) : "—";
     const pnl = a && a.initialized ? a.daily_realized_pnl : null;
     return `<div class="strategy-card">
-      <div class="head">
-        <div class="ic">${meta.icon}</div>
-        <div class="name">${meta.label}</div>
-        <div class="tag">Teste</div>
-      </div>
-      <canvas id="spark-${id}" height="34"></canvas>
-      <div class="body">
-        <div><div class="lbl">Patrimônio</div><div class="v">${equity}</div></div>
-        <div style="text-align:right"><div class="lbl">PnL do dia</div><div class="v ${pnl >= 0 ? "up" : "down"}">${pnl === null ? "—" : fmtMoney(pnl)}</div></div>
-      </div>
+      <div class="head"><div class="ic">${meta.icon}</div><div class="name">${meta.label}</div><div class="tag">TESTE</div></div>
+      <canvas id="spark-${id}" height="30"></canvas>
+      <div class="body"><div><div class="lbl">Patrimônio</div><div class="v">${equity}</div></div>
+      <div style="text-align:right"><div class="lbl">PnL dia</div><div class="v ${pnl >= 0 ? "up" : "down"}">${pnl === null ? "—" : fmtMoney(pnl)}</div></div></div>
     </div>`;
   }).join("");
   accountIds.forEach((id) => renderSparkline(`spark-${id}`, id, ACCENT_COLORS[id]));
 }
 
 // -- positions table ------------------------------------------------------
-function renderPositionsTable(tbodyId, accountIds, showAccountColumn = false) {
+function renderPositionsTable(tbodyId, accountIds, showAccountColumn) {
   const tbody = el(tbodyId);
   if (!tbody) return;
   const positions = cache.positions || {};
   const rows = [];
   for (const id of accountIds) {
-    for (const p of positions[id] || []) {
-      rows.push({ account: id, ...p });
-    }
+    for (const p of positions[id] || []) rows.push({ account: id, ...p });
   }
   if (!rows.length) {
-    const colspan = showAccountColumn ? 11 : 10;
-    tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">Nenhuma posição aberta</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${showAccountColumn ? 11 : 10}" class="empty">Nenhuma posição aberta</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map((p) => {
     const hasLiveData = p.mark_price !== undefined && p.mark_price !== null;
     const pnl = hasLiveData ? p.unrealized_pnl : null;
-    const mismatchWarning = p.mirror_ok === false ? `<span class="pill crit" title="Corretora reporta posição fechada - aguardando reconciliação">⚠ divergente</span>` : `<span class="pill ok">Aberta</span>`;
+    const statusPill = p.mirror_ok === false
+      ? `<span class="pill crit" title="Corretora reporta posição fechada">⚠ DIVERGENTE</span>`
+      : `<span class="pill ok">ABERTA</span>`;
     const accountCell = showAccountColumn ? `<td>${ACCOUNTS[p.account].label}</td>` : "";
-    return `<tr>
-      ${accountCell}
-      <td class="mono">${p.symbol}</td>
+    return `<tr>${accountCell}
+      <td class="num">${p.symbol}</td>
       <td><span class="pill ${p.side === "LONG" ? "long" : "short"}">${p.side}</span></td>
-      <td class="mono">${fmtNum(p.entry_price)}</td>
-      <td class="mono">${fmtNum(p.quantity)}</td>
-      <td class="mono">${p.stop_price ? fmtNum(p.stop_price) : "—"}</td>
-      <td class="mono">${p.take_profit_price ? fmtNum(p.take_profit_price) : (p.momentum_score !== undefined ? `${p.momentum_score.toFixed(1)}%` : "—")}</td>
-      <td class="mono">${hasLiveData ? fmtNum(p.mark_price) : "—"}</td>
-      <td class="mono ${pnl >= 0 ? "up" : pnl < 0 ? "down" : ""}">${pnl === null ? "—" : fmtMoney(pnl)}</td>
-      <td class="mono">${fmtDuration(p.entry_time)}</td>
-      <td>${mismatchWarning}</td>
+      <td class="num">${fmtNum(p.entry_price)}</td>
+      <td class="num">${fmtNum(p.quantity)}</td>
+      <td class="num">${p.stop_price ? fmtNum(p.stop_price) : "—"}</td>
+      <td class="num">${p.take_profit_price ? fmtNum(p.take_profit_price) : (p.momentum_score !== undefined ? `${p.momentum_score.toFixed(1)}%` : "—")}</td>
+      <td class="num">${hasLiveData ? fmtNum(p.mark_price) : "—"}</td>
+      <td class="num ${pnl >= 0 ? "up" : pnl < 0 ? "down" : ""}">${pnl === null ? "—" : fmtMoney(pnl)}</td>
+      <td class="num">${fmtDuration(p.entry_time)}</td>
+      <td>${statusPill}</td>
     </tr>`;
   }).join("");
 }
 
-// -- risk monitor ---------------------------------------------------------
+// -- risk monitor (interativo/explicativo) ---------------------------------
 function renderRiskMonitor(elId, accountId) {
   const root = el(elId);
   if (!root) return;
   const account = (cache.overview.accounts || {})[accountId];
   const positions = (cache.positions || {})[accountId] || [];
-  if (!account || !account.initialized) {
-    root.innerHTML = `<div class="empty">Conta ainda não inicializada</div>`;
-    return;
-  }
-  const exposurePct = Math.min(1, positions.length / 10); // rough visual only - real max_open_positions is 10
+  if (!account || !account.initialized) { root.innerHTML = `<div class="empty">Conta ainda não inicializada</div>`; return; }
+
+  const exposurePct = Math.min(1, positions.length / 10);
   root.innerHTML = `
-    <div class="risk-row"><span class="rl">Posições abertas</span><span class="rv">${positions.length}<span class="rmax">/ 10 máx.</span></span></div>
-    <div class="progress"><div style="width:${exposurePct * 100}%"></div></div>
-    <div class="risk-row"><span class="rl">Drawdown</span><span class="rv">${fmtPct(account.drawdown_pct)}</span></div>
-    <div class="risk-row"><span class="rl">Perdas seguidas</span><span class="rv">${account.consecutive_losses}</span></div>
-    <div class="risk-row"><span class="rl">PnL do dia</span><span class="rv ${account.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(account.daily_realized_pnl)}</span></div>
-    <div class="risk-row"><span class="rl">Kill Switch</span><span class="rv"><span class="toggle ${account.kill_switch.is_triggered ? "" : "on"}"></span></span></div>
-    ${account.kill_switch.is_triggered ? `<div class="risk-row"><span class="rl">Motivo</span><span class="rv down" style="font-size:11px">${escapeHtml((account.kill_switch.reasons || []).join(", "))}</span></div>
-    <div style="margin-top:10px"><button class="icon-btn" style="width:auto;padding:6px 12px" onclick="resetKillSwitch('${accountId}')">Resetar Kill Switch</button></div>` : ""}
+    <div style="display:flex;gap:16px;align-items:center;margin-bottom:8px">
+      <div class="gauge-wrap">${radialGaugeSvg(exposurePct, positions.length, "/10 POSIÇÕES")}</div>
+      <div style="flex:1">
+        <div class="risk-row"><span class="rl">Drawdown do dia</span><span class="rv">${fmtPct(account.drawdown_pct)}</span></div>
+        <div class="progress"><div style="width:${Math.min(100, account.drawdown_pct / 0.10 * 100)}%;background:${account.drawdown_pct > 0.075 ? "var(--red)" : account.drawdown_pct > 0.05 ? "var(--amber)" : "var(--accent)"}"></div></div>
+        <div class="risk-row" style="margin-top:6px"><span class="rl">Perdas seguidas</span><span class="rv">${account.consecutive_losses}</span></div>
+        <div class="risk-row"><span class="rl">PnL do dia</span><span class="rv ${account.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(account.daily_realized_pnl)}</span></div>
+      </div>
+    </div>
+    <div class="explain-box ${account.drawdown_pct > 0.075 ? "crit" : account.drawdown_pct > 0.05 ? "" : "ok"}">
+      <b>Drawdown:</b> acima de 5% o sistema entra em CAUTELA (reduz risco por trade em 25%); acima de 7.5%, REDUZIDO (corta mais); acima de 10%, o Kill Switch trava novas entradas.
+    </div>
+    <div class="explain-box ${account.consecutive_losses >= 5 ? "crit" : account.consecutive_losses >= 3 ? "" : "ok"}">
+      <b>Perdas seguidas:</b> em 3, modo cautela; em 5, reduz o tamanho das próximas entradas; em 8, trava novas entradas até reset manual.
+    </div>
+    <div class="risk-row" style="margin-top:4px">
+      <span class="rl">Kill Switch</span>
+      <span style="display:flex;align-items:center;gap:8px"><span class="toggle ${account.kill_switch.is_triggered ? "" : "on"}"></span>
+      <b class="${account.kill_switch.is_triggered ? "down" : "up"}">${account.kill_switch.is_triggered ? "DISPARADO" : "NORMAL"}</b></span>
+    </div>
+    ${account.kill_switch.is_triggered ? `
+      <div class="explain-box crit"><b>Motivo:</b> ${escapeHtml((account.kill_switch.reasons || []).join(", "))}</div>
+      <button class="icon-btn" style="width:auto;padding:6px 12px;margin-top:6px" onclick="resetKillSwitch('${accountId}')">RESETAR (auditado)</button>
+    ` : ""}
   `;
 }
 
-// -- execution feed (derived from real closed trades - see journal endpoint) --
-function renderExecutionFeed(elId, accountIds) {
+// -- log-style execution feed (Execução) -----------------------------------
+function renderLogFeed(elId, accountIds) {
   const root = el(elId);
   if (!root) return;
-  const entries = (cache.journal.entries || []).filter((e) => accountIds.includes(e.account)).slice(0, 15);
-  if (!entries.length) {
-    root.innerHTML = `<div class="empty">Nenhuma atividade recente</div>`;
-    return;
-  }
+  const entries = (cache.journal.entries || []).filter((e) => accountIds.includes(e.account)).slice(0, 20);
+  if (!entries.length) { root.innerHTML = `<div class="empty">Nenhuma atividade recente</div>`; return; }
+  root.innerHTML = entries.map((e) => {
+    const cls = e.net_pnl >= 0 ? "close-win" : "close-loss";
+    return `<div class="log-line ${cls}">[<span class="ts">${fmtClock(e.closed_at)}</span>] CLOSE ${e.symbol.padEnd(13)} ${e.side.padEnd(5)} ${e.exit_reason.padEnd(12)} pnl=${e.net_pnl >= 0 ? "+" : ""}${e.net_pnl.toFixed(2)} r=${e.r_multiple.toFixed(2)} <span style="color:var(--text-faint)">· ${ACCOUNTS[e.account] ? ACCOUNTS[e.account].label : e.account}</span></div>`;
+  }).join("");
+}
+
+// -- timeline (Histórico) ---------------------------------------------------
+function renderTimeline(elId, accountIds) {
+  const root = el(elId);
+  if (!root) return;
+  const entries = (cache.journal.entries || []).filter((e) => accountIds.includes(e.account)).slice(0, 12);
+  if (!entries.length) { root.innerHTML = `<div class="empty">Nenhum evento ainda</div>`; return; }
   root.innerHTML = entries.map((e) => {
     const isWin = e.net_pnl >= 0;
-    return `<div class="feed-row">
-      <div class="fic ${isWin ? "buy" : "sell"}">${isWin ? "▲" : "▼"}</div>
-      <div class="ftext">
-        <div class="ftitle">Posição fechada — ${e.symbol} (${e.exit_reason})</div>
-        <div class="fdesc">${ACCOUNTS[e.account] ? ACCOUNTS[e.account].label : e.account} · ${e.side} · PnL ${fmtMoney(e.net_pnl)} · R ${e.r_multiple.toFixed(2)}</div>
-      </div>
-      <div class="ftime">${fmtClock(e.closed_at)}</div>
+    return `<div class="timeline-item">
+      <div class="tdot ${isWin ? "win" : "loss"}"></div>
+      <div class="ttime">${fmtTime(e.closed_at)}</div>
+      <div class="ttitle">${e.symbol} fechado (${e.exit_reason})</div>
+      <div class="tdesc ${isWin ? "up" : "down"}">${ACCOUNTS[e.account] ? ACCOUNTS[e.account].label : e.account} · ${e.side} · PnL ${fmtMoney(e.net_pnl)} · R ${e.r_multiple.toFixed(2)}</div>
+      ${e.reasons && e.reasons.length ? `<div class="treason">&#8618; ${escapeHtml(e.reasons.join("; "))}</div>` : ""}
     </div>`;
   }).join("");
 }
 
-// -- strategies tab (all accounts, fuller detail) -------------------------
-function renderStrategiesTab() {
-  renderStrategyGrid("strategies-all", Object.keys(ACCOUNTS));
-}
+// -- strategies tab (all accounts) -----------------------------------------
+function renderStrategiesTab() { renderStrategyGrid("strategies-all", Object.keys(ACCOUNTS)); }
 
-// -- positions tab (consolidated) ------------------------------------------
-function renderPositionsTab() {
-  renderPositionsTable("positions-table-all", Object.keys(ACCOUNTS), true);
-}
+// -- positions tab (consolidated) -------------------------------------------
+function renderPositionsTab() { renderPositionsTable("positions-table-all", Object.keys(ACCOUNTS), true); }
 
-// -- orders tab (closed trades - no granular per-order log is persisted) --
+// -- orders tab: per-strategy trade history + merged journal ----------------
+function setOrdersFilter(accountId) {
+  ordersFilter = accountId;
+  qsa("#orders-chips .chip").forEach((c) => c.classList.toggle("active", c.dataset.account === accountId));
+  renderOrdersTab();
+}
+async function ensureTradesLoaded(accountId) {
+  if (cache.tradesByAccount[accountId]) return;
+  const data = await getJSON(`/api/trades?account=${accountId}&limit=100`);
+  cache.tradesByAccount[accountId] = data.trades;
+}
 function renderOrdersTab() {
   const tbody = el("orders-table");
-  const entries = cache.journal.entries || [];
-  if (!entries.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty">Nenhum trade ainda</td></tr>`;
-    return;
+  let rows;
+  if (ordersFilter === "all") {
+    rows = (cache.journal.entries || []).map((e) => ({ account: e.account, ...e }));
+  } else {
+    rows = (cache.tradesByAccount[ordersFilter] || []).map((t) => ({ account: ordersFilter, ...t }));
   }
-  tbody.innerHTML = entries.map((e) => `
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="7" class="empty">Nenhum trade ainda</td></tr>`; return; }
+  tbody.innerHTML = rows.map((e) => `
     <tr>
       <td>${ACCOUNTS[e.account] ? ACCOUNTS[e.account].label : e.account}</td>
-      <td class="mono">${e.symbol}</td>
+      <td class="num">${e.symbol}</td>
       <td><span class="pill ${e.side === "LONG" ? "long" : "short"}">${e.side}</span></td>
-      <td class="mono">${e.exit_reason}</td>
-      <td class="mono ${e.net_pnl >= 0 ? "up" : "down"}">${fmtMoney(e.net_pnl)}</td>
-      <td class="mono">${e.r_multiple.toFixed(2)}</td>
-      <td class="mono">${fmtTime(e.closed_at)}</td>
+      <td class="num">${e.exit_reason}</td>
+      <td class="num ${e.net_pnl >= 0 ? "up" : "down"}">${fmtMoney(e.net_pnl)}</td>
+      <td class="num">${e.r_multiple.toFixed(2)}</td>
+      <td class="num">${fmtTime(e.closed_at)}</td>
     </tr>`).join("");
 }
 
 // -- risk & logs tab --------------------------------------------------------
 function renderRiskLogsTab() {
   const accounts = cache.overview.accounts || {};
-  const root = el("risk-logs-accounts");
-  root.innerHTML = Object.keys(ACCOUNTS).map((id) => {
+  el("risk-logs-accounts").innerHTML = Object.keys(ACCOUNTS).map((id) => {
     const a = accounts[id];
     const meta = ACCOUNTS[id];
     if (!a || !a.initialized) return `<div class="card"><h2>${meta.label}</h2><div class="empty">Não inicializada</div></div>`;
     const ks = a.kill_switch.is_triggered
-      ? `<span class="pill crit">DISPARADO</span> <button class="icon-btn" style="width:auto;padding:5px 10px;display:inline-flex" onclick="resetKillSwitch('${id}')">Reset</button>`
-      : `<span class="pill ok">Normal</span>`;
+      ? `<span class="pill crit">DISPARADO</span> <button class="icon-btn" style="width:auto;padding:4px 9px;display:inline-flex;font-size:10px" onclick="resetKillSwitch('${id}')">RESET</button>`
+      : `<span class="pill ok">NORMAL</span>`;
+    const events = cache.killSwitchEvents[id] || [];
     return `<div class="card">
       <h2>${meta.label}</h2>
       <div class="risk-row"><span class="rl">Equity</span><span class="rv">${fmtMoney(a.equity)}</span></div>
       <div class="risk-row"><span class="rl">Drawdown</span><span class="rv">${fmtPct(a.drawdown_pct)}</span></div>
       <div class="risk-row"><span class="rl">Perdas seguidas</span><span class="rv">${a.consecutive_losses}</span></div>
       <div class="risk-row"><span class="rl">Kill Switch</span><span class="rv">${ks}</span></div>
-      ${a.kill_switch.reasons && a.kill_switch.reasons.length ? `<div class="risk-row"><span class="rl">Motivo</span><span class="rv" style="font-size:11px;color:var(--text-faint)">${escapeHtml(a.kill_switch.reasons.join(", "))}</span></div>` : ""}
+      ${events.length ? `<div style="margin-top:8px;font-size:10px;color:var(--text-faint);font-family:'JetBrains Mono'">HISTÓRICO KILL SWITCH</div>
+        ${events.slice(0, 4).map((ev) => `<div style="font-size:10px;color:var(--text-faint);font-family:'JetBrains Mono';padding:3px 0;border-top:1px solid var(--border-soft)">${fmtTime(ev.occurred_at)} · <span class="${ev.action === "TRIGGERED" ? "down" : "up"}">${ev.action}</span>${ev.note ? ` · ${escapeHtml(ev.note)}` : ""}</div>`).join("")}` : ""}
     </div>`;
   }).join("");
 
@@ -478,6 +527,7 @@ function renderRiskLogsTab() {
   renderNews();
   renderEvents();
   renderBacktests();
+  renderMarketIntelligence();
 }
 
 function renderHealth() {
@@ -485,44 +535,102 @@ function renderHealth() {
   if (!tbody) return;
   const rows = cache.health.candles || [];
   tbody.innerHTML = rows.map((r) => `
-    <tr>
-      <td class="mono">${r.symbol}</td>
-      <td class="mono">${r.interval}</td>
-      <td class="mono">${fmtTime(r.latest_close_time)}</td>
-      <td>${r.stale ? '<span class="pill crit">Atrasado</span>' : '<span class="pill ok">OK</span>'}</td>
-    </tr>`).join("") || `<tr><td colspan="4" class="empty">Sem dados</td></tr>`;
+    <tr><td class="num">${r.symbol}</td><td class="num">${r.interval}</td><td class="num">${fmtTime(r.latest_close_time)}</td>
+    <td>${r.stale ? '<span class="pill crit">ATRASADO</span>' : '<span class="pill ok">OK</span>'}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty">Sem dados</td></tr>`;
 }
 function renderNews() {
   const statusBody = el("news-status-table");
   if (statusBody) {
+    const pillClass = (status) => (status === "CLEAR" ? "ok" : status === "NEWS_CONFLICT" ? "crit" : "warn");
     statusBody.innerHTML = (cache.newsAssetStatus.statuses || []).map((s) => `
-      <tr><td class="mono">${s.asset}</td><td><span class="pill ${s.status === "CLEAR" ? "ok" : "warn"}">${s.status}</span></td>
-      <td class="mono">${s.source_count ?? "—"}</td><td class="mono">${s.sentiment ?? "—"}</td></tr>`).join("")
+      <tr><td class="num">${s.asset}</td><td><span class="pill ${pillClass(s.status)}">${s.status}</span></td>
+      <td class="num">${s.distinct_sources ?? "—"}</td><td class="num">${s.dominant_sentiment ?? "—"}</td></tr>`).join("")
       || `<tr><td colspan="4" class="empty">Sem dados</td></tr>`;
   }
   const recentBody = el("news-recent-table");
   if (recentBody) {
-    recentBody.innerHTML = (cache.newsRecent.items || []).slice(0, 12).map((n) => `
-      <tr><td class="mono">${n.source_id}</td><td>${escapeHtml(n.title)}</td><td>${n.sentiment}</td></tr>`).join("")
-      || `<tr><td colspan="3" class="empty">Sem dados</td></tr>`;
+    const items = cache.newsRecent.items || [];
+    recentBody.innerHTML = items.slice(0, 15).map((n) => `
+      <tr><td class="num">${n.source_id}</td><td>${escapeHtml(n.title)}</td><td>${n.sentiment}</td></tr>`).join("")
+      || `<tr><td colspan="3" class="empty">Nenhuma notícia coletada ainda</td></tr>`;
   }
 }
 function renderEvents() {
   const tbody = el("events-table");
   if (!tbody) return;
   tbody.innerHTML = (cache.eventsUpcoming.events || []).map((e) => `
-    <tr><td class="mono">${fmtTime(e.date_event)}</td><td>${escapeHtml(e.title)}</td><td class="mono">${(e.coins || []).join(", ")}</td></tr>`).join("")
+    <tr><td class="num">${fmtTime(e.date_event)}</td><td>${escapeHtml(e.title)}</td><td class="num">${(e.coins || []).join(", ")}</td></tr>`).join("")
     || `<tr><td colspan="3" class="empty">Sem eventos</td></tr>`;
+}
+
+function toggleBacktestRun(runId) {
+  expandedBacktestRun = expandedBacktestRun === runId ? null : runId;
+  renderBacktests();
+  if (expandedBacktestRun !== null) loadBacktestTrades(runId);
+}
+async function loadBacktestTrades(runId) {
+  const container = el(`backtest-trades-${runId}`);
+  if (!container) return;
+  container.innerHTML = `<div class="empty">Carregando trades…</div>`;
+  try {
+    const data = await getJSON(`/api/backtests/${runId}/trades`);
+    if (!data.trades.length) { container.innerHTML = `<div class="empty">Nenhum trade neste run</div>`; return; }
+    container.innerHTML = `<table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead><tbody>
+      ${data.trades.map((t) => `<tr><td class="num">${t.symbol}</td><td><span class="pill ${t.side === "LONG" ? "long" : "short"}">${t.side}</span></td>
+        <td class="num">${fmtTime(t.entry_time)}</td><td class="num">${fmtTime(t.exit_time)}</td>
+        <td class="num ${t.net_pnl >= 0 ? "up" : "down"}">${fmtMoney(t.net_pnl)}</td><td class="num">${t.r_multiple.toFixed(2)}</td></tr>`).join("")}
+      </tbody></table>`;
+  } catch (e) {
+    container.innerHTML = `<div class="empty">Erro ao carregar: ${escapeHtml(e.message)}</div>`;
+  }
 }
 function renderBacktests() {
   const tbody = el("backtests-table");
   if (!tbody) return;
-  tbody.innerHTML = (cache.backtests.runs || []).map((r) => `
-    <tr><td class="mono">${r.symbol}</td><td class="mono">${r.total_trades}</td>
-    <td class="mono">${fmtPct(r.win_rate)}</td>
-    <td class="mono ${r.net_pnl >= 0 ? "up" : "down"}">${fmtMoney(r.net_pnl)}</td>
-    <td>${r.kill_switch_triggered ? '<span class="pill crit">Disparado</span>' : '<span class="pill ok">OK</span>'}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="empty">Sem backtests</td></tr>`;
+  const runs = cache.backtests.runs || [];
+  if (!runs.length) { tbody.innerHTML = `<tr><td colspan="6" class="empty">Sem backtests</td></tr>`; return; }
+  tbody.innerHTML = runs.map((r) => {
+    const isOpen = expandedBacktestRun === r.id;
+    return `<tr class="clickable" onclick="toggleBacktestRun(${r.id})">
+      <td class="num">${isOpen ? "▾" : "▸"} ${r.symbol}</td><td class="num">${r.total_trades}</td>
+      <td class="num">${fmtPct(r.win_rate)}</td>
+      <td class="num ${r.net_pnl >= 0 ? "up" : "down"}">${fmtMoney(r.net_pnl)}</td>
+      <td>${r.kill_switch_triggered ? '<span class="pill crit">DISPAROU</span>' : '<span class="pill ok">OK</span>'}</td>
+      <td class="num">${fmtTime(r.created_at)}</td>
+    </tr>${isOpen ? `<tr><td colspan="6" style="padding:0"><div id="backtest-trades-${r.id}" style="padding:10px"></div></td></tr>` : ""}`;
+  }).join("");
+}
+
+function renderMarketIntelligence() {
+  const macroBody = el("macro-table");
+  if (macroBody) {
+    macroBody.innerHTML = (cache.macro.series || []).map((s) => `
+      <tr><td>${s.name || s.series_id}<div style="font-size:9.5px;color:var(--text-faint)">${s.series_id}</div></td>
+      <td class="num">${s.value !== null && s.value !== undefined ? fmtNum(s.value, 2) : "—"}</td>
+      <td class="num ${s.change_pct >= 0 ? "up" : s.change_pct < 0 ? "down" : ""}">${s.change_pct !== null && s.change_pct !== undefined ? fmtPct(s.change_pct / 100, 2) : "—"}</td>
+      <td class="num">${s.as_of ? fmtTime(s.as_of) : "—"}</td>
+      <td><span class="pill ${s.quality === "OK" ? "ok" : "neutral"}">${s.quality || "SEM DADOS"}</span></td></tr>`).join("")
+      || `<tr><td colspan="5" class="empty">Sem séries macro configuradas</td></tr>`;
+  }
+  const derivBody = el("derivatives-table");
+  if (derivBody) {
+    derivBody.innerHTML = (cache.derivatives.symbols || []).map((s) => `
+      <tr><td class="num">${s.symbol}</td>
+      <td class="num">${s.funding_rate !== null ? fmtPct(s.funding_rate, 4) : "—"}</td>
+      <td class="num">${s.open_interest !== null ? fmtNum(s.open_interest, 0) : "—"}</td>
+      <td class="num">${s.long_short_ratio !== null ? fmtNum(s.long_short_ratio, 3) : "—"}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty">Sem dados</td></tr>`;
+  }
+  const liqBody = el("liquidations-table");
+  if (liqBody) {
+    liqBody.innerHTML = (cache.liquidations.symbols || []).map((s) => `
+      <tr><td class="num">${s.symbol}</td>
+      <td class="num down">${fmtMoney(s.long_notional)}</td>
+      <td class="num up">${fmtMoney(s.short_notional)}</td>
+      <td class="num">${s.long_count + s.short_count}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty">Sem liquidações na última hora</td></tr>`;
+  }
 }
 
 // -- kill switch reset -----------------------------------------------------
@@ -536,10 +644,11 @@ window.resetKillSwitch = async function (accountId) {
     if (!r.ok) { alert(`Falha ao resetar: HTTP ${r.status}`); return; }
     await refreshData();
     renderAll();
-  } catch (e) {
-    alert(`Erro: ${e.message}`);
-  }
+  } catch (e) { alert(`Erro: ${e.message}`); }
 };
+window.toggleBacktestRun = toggleBacktestRun;
+window.toggleTheme = toggleTheme;
+window.setOrdersFilter = setOrdersFilter;
 
 // -- master render dispatch ------------------------------------------------
 function renderAll() {
@@ -555,7 +664,7 @@ function renderAll() {
 // -- data refresh --------------------------------------------------------
 async function refreshData() {
   const accountIds = Object.keys(ACCOUNTS);
-  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, health] = await Promise.all([
+  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, health, macro, derivatives, liquidations] = await Promise.all([
     getJSON("/api/overview"),
     getJSON("/api/positions"),
     getJSON("/api/journal?limit=50"),
@@ -565,6 +674,9 @@ async function refreshData() {
     getJSON("/api/events/upcoming?limit=20"),
     getJSON("/api/backtests?limit=15"),
     getJSON("/api/system/health"),
+    getJSON("/api/market/macro"),
+    getJSON("/api/market/derivatives"),
+    getJSON("/api/market/liquidations"),
   ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
@@ -572,9 +684,19 @@ async function refreshData() {
   const equityHistory = {};
   accountIds.forEach((id, i) => { equityHistory[id] = equityHistoryPairs[i]; });
 
+  const killSwitchEventPairs = await Promise.all(
+    accountIds.map((id) => getJSON(`/api/kill-switch/${id}/events?limit=5`).catch(() => ({ events: [] }))),
+  );
+  const killSwitchEvents = {};
+  accountIds.forEach((id, i) => { killSwitchEvents[id] = killSwitchEventPairs[i].events; });
+
+  if (ordersFilter !== "all") await ensureTradesLoaded(ordersFilter);
+
   cache = {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, health,
+    macro, derivatives, liquidations, killSwitchEvents,
+    tradesByAccount: cache.tradesByAccount,
   };
 }
 
@@ -582,9 +704,9 @@ async function refresh() {
   try {
     await refreshData();
     renderAll();
-    el("last-update").textContent = `Última atualização: ${new Date().toLocaleTimeString("pt-BR")}`;
+    el("last-update").textContent = `ÚLTIMA ATUALIZAÇÃO: ${new Date().toLocaleTimeString("pt-BR")}`;
   } catch (e) {
-    el("last-update").textContent = `Erro ao atualizar: ${e.message}`;
+    el("last-update").textContent = `ERRO: ${e.message}`;
   }
 }
 
@@ -593,9 +715,12 @@ function initTabs() {
   qsa(".tab-btn").forEach((btn) => btn.addEventListener("click", () => setActiveTab(btn.dataset.tab)));
   qsa(".exchange-toggle button").forEach((btn) => btn.addEventListener("click", () => setActiveExchange(btn.dataset.exchange)));
   qsa(".chart-tabs button").forEach((btn) => btn.addEventListener("click", () => setChartRange(btn.dataset.range)));
+  const themeBtn = el("theme-toggle");
+  if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   initTabs();
   setActiveTab("bingx");
   refresh();
