@@ -50,6 +50,16 @@ class BracketOrders:
     take_profit: OrderResult
 
 
+@dataclass(slots=True)
+class TrailingBracketOrders:
+    """Same shape as BracketOrders, but the profit-taking leg is a
+    TRAILING_STOP_MARKET instead of a fixed take-profit - Fase 16's BingX
+    Momentum Engine, mirroring `aegis.execution.binance_provider.TrailingBracketOrders`."""
+    entry: OrderResult
+    stop: OrderResult
+    trailing_stop: OrderResult
+
+
 class BracketOpenError(RuntimeError):
     """Same shape as `aegis.execution.binance_provider.BracketOpenError` -
     `flattened` says whether the emergency close succeeded (True) or also
@@ -101,6 +111,38 @@ class BingXExecutionProvider:
             ) from exc
 
         return BracketOrders(entry=entry, stop=stop, take_profit=take_profit)
+
+    async def open_trailing_bracket_position(
+        self, symbol: str, side: str, quantity: float, stop_price: float, callback_rate_pct: float, leverage: int,
+        activation_price: float | None = None,
+    ) -> TrailingBracketOrders:
+        """Same entry + safety-net-stop mechanics as `open_bracket_position`,
+        but the profit-taking leg is a TRAILING_STOP_MARKET (Fase 16 -
+        BingX Momentum Engine) instead of a fixed take-profit target -
+        mirrors `BinanceExecutionProvider.open_trailing_bracket_position`.
+        Same fail-safe policy: either leg failing to place flattens the
+        position immediately, never left running with partial or no
+        protection."""
+        await self._set_leverage_or_raise(symbol, leverage)
+        entry = await self.rest.place_market_order(symbol, self._entry_side(side), quantity)
+        closing_side = self._closing_side(side)
+        fill_qty = entry.executed_qty or quantity
+
+        try:
+            stop = await self.rest.place_stop_market_order(symbol, closing_side, stop_price, quantity=fill_qty)
+            trailing_stop = await self.rest.place_trailing_stop_order(
+                symbol, closing_side, callback_rate_pct, quantity=fill_qty, activation_price=activation_price,
+            )
+        except BingXOrderError as exc:
+            flattened = await self._emergency_close(symbol, closing_side, fill_qty)
+            raise BracketOpenError(
+                f"trailing bracket setup failed after entry filled ({symbol} {side} qty={quantity}): {exc}. "
+                + ("Position was flattened." if flattened
+                   else "FLATTEN ALSO FAILED - MANUAL INTERVENTION REQUIRED NOW."),
+                flattened=flattened,
+            ) from exc
+
+        return TrailingBracketOrders(entry=entry, stop=stop, trailing_stop=trailing_stop)
 
     async def _set_leverage_or_raise(self, symbol: str, leverage: int) -> None:
         try:

@@ -41,7 +41,7 @@ from aegis.risk.rules import compute_drawdown_pct
 
 router = APIRouter()
 
-_TRACKED_ACCOUNTS = ("paper", "shadow", "shadow_bingx", "momentum")
+_TRACKED_ACCOUNTS = ("paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx")
 _TRADING_INTERVAL = "1h"  # the interval Paper/Shadow Trading actually act on (Phase 9/10)
 
 
@@ -77,7 +77,9 @@ async def get_positions(
     shadow_repo: ShadowRepository = Depends(get_shadow_repo),
     momentum_repo: MomentumRepository = Depends(get_momentum_repo),
 ) -> dict:
-    positions: dict[str, list[dict]] = {"paper": [], "shadow": [], "shadow_bingx": [], "momentum": []}
+    positions: dict[str, list[dict]] = {
+        "paper": [], "shadow": [], "shadow_bingx": [], "momentum": [], "momentum_bingx": [],
+    }
     for symbol in settings.symbols:
         paper_position = await paper_repo.get_open_position("paper", symbol)
         if paper_position is not None:
@@ -121,6 +123,17 @@ async def get_positions(
                                            "stop_price": momentum_position.stop_price,
                                            "momentum_score": momentum_position.momentum_score,
                                            "entry_time": momentum_position.entry_time})
+    # BingX Momentum Engine (Fase 16) - same dynamic-universe caveat as
+    # Binance's "momentum" account above.
+    for symbol in await momentum_repo.get_open_symbols("momentum_bingx"):
+        momentum_bingx_position = await momentum_repo.get_open_position("momentum_bingx", symbol)
+        if momentum_bingx_position is not None:
+            positions["momentum_bingx"].append({"symbol": symbol, "side": momentum_bingx_position.side,
+                                                 "entry_price": momentum_bingx_position.entry_price,
+                                                 "quantity": momentum_bingx_position.quantity,
+                                                 "stop_price": momentum_bingx_position.stop_price,
+                                                 "momentum_score": momentum_bingx_position.momentum_score,
+                                                 "entry_time": momentum_bingx_position.entry_time})
     return positions
 
 
@@ -163,8 +176,13 @@ async def get_trades(
         trades = await shadow_repo.fetch_trades("shadow_bingx", limit=limit)
     elif account == "momentum":
         trades = await momentum_repo.fetch_trades("momentum", limit=limit)
+    elif account == "momentum_bingx":
+        trades = await momentum_repo.fetch_trades("momentum_bingx", limit=limit)
     else:
-        raise HTTPException(status_code=400, detail="account must be 'paper', 'shadow', 'shadow_bingx' or 'momentum'")
+        raise HTTPException(
+            status_code=400,
+            detail="account must be 'paper', 'shadow', 'shadow_bingx', 'momentum' or 'momentum_bingx'",
+        )
     return {"account": account, "trades": trades}
 
 
@@ -183,17 +201,19 @@ async def get_journal(
     trades on its own (cheap - these tables are still small) so merging
     never has to worry about one account's older trades getting starved out
     by another's more active one before the final sort/truncate."""
-    paper, shadow, shadow_bingx, momentum = await asyncio.gather(
+    paper, shadow, shadow_bingx, momentum, momentum_bingx = await asyncio.gather(
         paper_repo.fetch_trades("paper", limit=limit),
         shadow_repo.fetch_trades("shadow", limit=limit),
         shadow_repo.fetch_trades("shadow_bingx", limit=limit),
         momentum_repo.fetch_trades("momentum", limit=limit),
+        momentum_repo.fetch_trades("momentum_bingx", limit=limit),
     )
     entries = (
         [{"account": "paper", **t} for t in paper]
         + [{"account": "shadow", **t} for t in shadow]
         + [{"account": "shadow_bingx", **t} for t in shadow_bingx]
         + [{"account": "momentum", **t} for t in momentum]
+        + [{"account": "momentum_bingx", **t} for t in momentum_bingx]
     )
     entries.sort(key=lambda t: t["closed_at"], reverse=True)
     return {"entries": entries[:limit]}

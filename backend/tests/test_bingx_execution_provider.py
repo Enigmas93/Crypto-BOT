@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from aegis.execution.bingx_provider import BingXExecutionProvider, BracketOpenError
+from aegis.execution.bingx_provider import BingXExecutionProvider, BracketOpenError, TrailingBracketOrders
 from aegis.providers.bingx.models import OrderResult, PositionRisk
 from aegis.providers.bingx.rest_client import BingXOrderError
 
@@ -26,6 +26,7 @@ class _FakeRestClient:
         self.calls: list[tuple] = []
         self.fail_stop = False
         self.fail_take_profit = False
+        self.fail_trailing_stop = False
         self.fail_emergency_close = False
         self.fail_set_leverage = False
         self.fail_cancel_code: int | None = None
@@ -58,6 +59,12 @@ class _FakeRestClient:
         if self.fail_take_profit:
             raise BingXOrderError("take profit rejected")
         return _order(self._new_id(), symbol=symbol, side=side, type_="TAKE_PROFIT_MARKET", status="NEW")
+
+    async def place_trailing_stop_order(self, symbol, side, callback_rate_pct, quantity, activation_price=None):
+        self.calls.append(("place_trailing_stop_order", symbol, side, callback_rate_pct, quantity, activation_price))
+        if self.fail_trailing_stop:
+            raise BingXOrderError("trailing stop rejected")
+        return _order(self._new_id(), symbol=symbol, side=side, type_="TRAILING_STOP_MARKET", status="NEW")
 
     async def cancel_order(self, symbol, order_id):
         self.calls.append(("cancel_order", symbol, order_id))
@@ -211,4 +218,73 @@ async def test_set_leverage_failure_prevents_any_order_from_being_placed():
         await provider.open_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 68000.0, 5)
 
     assert exc_info.value.flattened is True  # nothing was ever opened
+    assert not any(c[0] == "place_market_order" for c in rest.calls)
+
+
+@pytest.mark.asyncio
+async def test_open_trailing_bracket_position_happy_path():
+    rest = _FakeRestClient()
+    provider = BingXExecutionProvider(rest)
+
+    brackets = await provider.open_trailing_bracket_position(
+        "BTCUSDT", "LONG", 0.01, 63000.0, 2.0, 3, activation_price=66000.0,
+    )
+
+    assert isinstance(brackets, TrailingBracketOrders)
+    assert brackets.entry.side == "BUY"
+    assert brackets.stop.type == "STOP_MARKET"
+    assert brackets.stop.side == "SELL"
+    assert brackets.trailing_stop.type == "TRAILING_STOP_MARKET"
+    assert brackets.trailing_stop.side == "SELL"
+    trailing_calls = [c for c in rest.calls if c[0] == "place_trailing_stop_order"]
+    assert trailing_calls == [("place_trailing_stop_order", "BTCUSDT", "SELL", 2.0, 0.01, 66000.0)]
+
+
+@pytest.mark.asyncio
+async def test_open_trailing_bracket_position_defaults_activation_price_to_none():
+    rest = _FakeRestClient()
+    provider = BingXExecutionProvider(rest)
+
+    await provider.open_trailing_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 2.0, 3)
+
+    trailing_calls = [c for c in rest.calls if c[0] == "place_trailing_stop_order"]
+    assert trailing_calls[0][5] is None
+
+
+@pytest.mark.asyncio
+async def test_trailing_stop_leg_failure_flattens_and_raises():
+    rest = _FakeRestClient()
+    rest.fail_trailing_stop = True
+    provider = BingXExecutionProvider(rest)
+
+    with pytest.raises(BracketOpenError) as exc_info:
+        await provider.open_trailing_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 2.0, 3)
+
+    assert exc_info.value.flattened is True
+    emergency_calls = [c for c in rest.calls if c[0] == "place_market_order" and c[4] is True]
+    assert len(emergency_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_trailing_bracket_hard_stop_failure_also_flattens():
+    rest = _FakeRestClient()
+    rest.fail_stop = True
+    provider = BingXExecutionProvider(rest)
+
+    with pytest.raises(BracketOpenError) as exc_info:
+        await provider.open_trailing_bracket_position("BTCUSDT", "SHORT", 0.01, 68000.0, 2.0, 3)
+
+    assert exc_info.value.flattened is True
+    assert not any(c[0] == "place_trailing_stop_order" for c in rest.calls)
+
+
+@pytest.mark.asyncio
+async def test_set_leverage_failure_prevents_trailing_bracket_entry_too():
+    rest = _FakeRestClient()
+    rest.fail_set_leverage = True
+    provider = BingXExecutionProvider(rest)
+
+    with pytest.raises(BracketOpenError):
+        await provider.open_trailing_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 2.0, 5)
+
     assert not any(c[0] == "place_market_order" for c in rest.calls)

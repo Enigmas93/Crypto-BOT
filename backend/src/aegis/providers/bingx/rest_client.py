@@ -424,6 +424,33 @@ class BingXFuturesRestClient:
         raw = await self._signed_write_json(SIGNED_ENDPOINTS["order"], params)
         return OrderResult.from_rest_payload(symbol, self._unwrap_order(raw))
 
+    async def place_trailing_stop_order(
+        self, symbol: str, side: str, callback_rate_pct: float, quantity: float,
+        activation_price: float | None = None, client_order_id: str | None = None,
+    ) -> OrderResult:
+        """A stop that ratchets in the position's favor - BingX manages the
+        trailing server-side (order type TRAILING_STOP_MARKET), same as
+        Binance. `side` is the CLOSING side (opposite of the position),
+        same convention as `place_stop_market_order`.
+
+        `callback_rate_pct` uses the SAME convention as
+        `BinanceFuturesRestClient.place_trailing_stop_order` (a percentage,
+        0.1-10 meaning 0.1%-10%) for callers - internally converted to
+        BingX's own `priceRate`, which is a FRACTION (0.05 = 5%, max 1) -
+        a real, confirmed difference from Binance's `callbackRate`
+        (already a percentage number like "2.0"). Never auto-retried."""
+        if not 0.1 <= callback_rate_pct <= 10:
+            raise ValueError(f"callback_rate_pct must be in [0.1, 10], got {callback_rate_pct}")
+        params: dict[str, Any] = {
+            "symbol": to_bingx_symbol(symbol), "side": side, "positionSide": "BOTH", "type": "TRAILING_STOP_MARKET",
+            "priceRate": round(callback_rate_pct / 100, 6), "quantity": round(quantity, 8), "reduceOnly": True,
+            "workingType": "MARK_PRICE", "clientOrderId": client_order_id or f"aegis{uuid.uuid4().hex[:16]}",
+        }
+        if activation_price is not None:
+            params["activationPrice"] = round(activation_price, 8)
+        raw = await self._signed_write_json(SIGNED_ENDPOINTS["order"], params)
+        return OrderResult.from_rest_payload(symbol, self._unwrap_order(raw))
+
     async def cancel_order(self, symbol: str, order_id: int) -> OrderResult:
         """Idempotent in effect: canceling an already-filled/canceled order
         raises BingXOrderError with code 109421 - callers that just want

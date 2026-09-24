@@ -151,6 +151,35 @@ async def test_place_market_order_sends_json_body_with_one_way_position_side():
 
 
 @pytest.mark.asyncio
+async def test_place_trailing_stop_order_converts_percent_to_bingx_fraction():
+    seen = {}
+
+    def signed_handler(request: httpx.Request) -> httpx.Response:
+        import json
+        body = json.loads(request.content)
+        seen["body"] = body
+        return _ok({
+            "orderId": 999, "clientOrderId": body["clientOrderId"], "symbol": "BTC-USDT",
+            "side": "SELL", "type": "TRAILING_STOP_MARKET", "status": "NEW", "origQty": "0.01",
+        })
+
+    client = _client_with_transport(_handler_with_clock_sync(signed_handler))
+    await client.place_trailing_stop_order("BTCUSDT", "SELL", 2.0, 0.01, activation_price=66000.0)
+    assert seen["body"]["priceRate"] == pytest.approx(0.02)  # 2% -> 0.02 fraction, not "2.0"
+    assert seen["body"]["activationPrice"] == 66000.0
+    assert seen["body"]["type"] == "TRAILING_STOP_MARKET"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_place_trailing_stop_order_rejects_out_of_range_callback_rate():
+    client = BingXFuturesRestClient(testnet=True, api_key="k", api_secret="s")
+    with pytest.raises(ValueError):
+        await client.place_trailing_stop_order("BTCUSDT", "SELL", 20.0, 0.01)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_place_market_order_never_retries_on_transport_error():
     def signed_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom", request=request)

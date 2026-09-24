@@ -209,9 +209,9 @@ alembic upgrade head          # cria todas as tabelas, até macro_series/macro_o
 python scripts/supervisor.py
 ```
 
-Lança os 12 processos de longa duração (Coletor, Derivatives, Liquidation,
+Lança os 13 processos de longa duração (Coletor, Derivatives, Liquidation,
 Order Book, Macro, News, Event Risk, Paper, Shadow, Shadow BingX, Momentum,
-Dashboard) de uma vez e
+Momentum BingX, Dashboard) de uma vez e
 reinicia sozinho qualquer um que caia por qualquer motivo, com backoff
 exponencial (ver "Métricas da Fase 15b", item 8, pra detalhes e validação
 ao vivo). Essa é a forma recomendada de deixar o sistema rodando sem
@@ -371,6 +371,25 @@ busca candles direto via REST a cada ciclo, porque o universo de símbolos
 candidatos; a cada `MOMENTUM_POLL_INTERVAL_SECONDS` (30s) reconcilia
 posições abertas (mesmo se o símbolo saiu do ranking atual) e avalia
 entrada nos candidatos correntes.
+
+## Rodar o Momentum Engine na BingX (ordens reais, VST/testnet - Fase 16)
+
+```bash
+python scripts/verify_bingx_execution_setup.py     # 1. confirma credenciais, saldo VST, modo one-way
+python scripts/verify_bingx_momentum_trading.py    # 2. scan real + um bracket trailing-stop real na BingX
+python scripts/run_bingx_momentum_trading.py       # 3. poller contínuo, execução na BingX
+```
+
+Mesmo scanner, mesmos parâmetros (`MOMENTUM_MIN_QUOTE_VOLUME`,
+`MOMENTUM_TOP_N`, etc.) do Momentum na Binance — o ranking por 24h
+continua vindo de dados públicos da Binance, já que a força de um
+movimento de mercado não muda dependendo de qual corretora vai executar a
+ordem depois. Roda como conta independente (`momentum_bingx`). Diferença
+real: o universo de símbolos do scanner é dinâmico (qualquer par líquido
+da Binance), então um candidato pode não existir na BingX — nesse caso o
+símbolo é pulado só para essa conta (logado uma vez, não repetidamente) em
+vez de forçado. Requer `BINGX_API_KEY`/`BINGX_API_SECRET` e recusa-se a
+rodar a menos que `BINGX_TESTNET=true` e `LIVE_TRADING=false`.
 
 ## Rodar o Dashboard
 
@@ -2990,13 +3009,42 @@ Dashboard) já rodando havia horas em produção real de testnet:
   (`BINGX_API_KEY`/`BINGX_API_SECRET`/`BINGX_TESTNET`), mesmo tratamento
   de toda outra credencial neste projeto - nunca versionadas, nunca
   ecoadas de volta no chat.
-- 27 testes novos (`test_bingx_rest_client.py`,
+- 34 testes novos (`test_bingx_rest_client.py`,
   `test_bingx_execution_provider.py`) cobrindo assinatura, mapeamento de
   símbolo, os bugs reais encontrados acima (parsing de booleano-como-
   string, ordem dos parâmetros, etc.) e os mesmos caminhos de falha
   críticos que `test_binance_execution_provider.py` já cobre (uma perna
   do bracket falhando nunca pode deixar uma posição sem proteção aberta).
-  602/602 testes passando no total do backend.
+
+### Paridade com o Momentum Engine (mesmo dia, após o usuário confirmar que queria os dois motores espelhados antes de considerar conta real)
+
+- `BingXExecutionProvider.open_trailing_bracket_position` +
+  `BingXFuturesRestClient.place_trailing_stop_order` adicionados,
+  mirroring a versão da Binance. Descoberta real ao testar ao vivo: o
+  `priceRate` da BingX é uma FRAÇÃO (`0.05` = 5%, máximo `1`), diferente
+  do `callbackRate` da Binance, que já é um número-percentual (`"2.0"` =
+  2%) - o cliente aceita `callback_rate_pct` na mesma convenção da Binance
+  nos dois casos e converte internamente, então nada muda pra quem chama.
+- `scripts/run_bingx_momentum_trading.py`: mesmo scanner (dados públicos
+  da Binance - a força de um movimento de mercado não depende de qual
+  corretora vai executar depois), conta independente `momentum_bingx`.
+  Diferença real do Shadow: o universo de símbolos do Momentum é dinâmico
+  (top-N do scanner entre TODOS os pares líquidos da Binance), então um
+  candidato pode simplesmente não existir na BingX - tratado como "pular
+  esse símbolo nesta conta" (logado uma vez por símbolo, não repetido a
+  cada ciclo), nunca como erro.
+- Validado ao vivo ponta a ponta contra a VST da BingX
+  (`scripts/verify_bingx_momentum_trading.py`): scan real (candidatos reais
+  do momento: TAKEUSDT, BROCCOLI714USDT, NILUSDT, LSKUSDT, ONEUSDT),
+  bracket com TRAILING_STOP_MARKET real colocado e confirmado com status
+  `NEW`, posição confirmada aberta, limpeza completa confirmada - passou
+  de primeira, sem nenhum bug novo além do `priceRate` já documentado
+  acima (a base de assinatura/tipos já validada no Shadow Trading se
+  aplicou sem alterações).
+- Dashboard: quinta conta rastreada (`momentum_bingx`) - cards de posições
+  e trades próprios, incluída no Trading Journal consolidado.
+  `run_bingx_momentum_trading.py` adicionado ao supervisor.
+- 610/610 testes passando no total do backend.
 - **Ainda pendente, por escolha do usuário** (funciona só em VST/testnet
   por enquanto): decisão de quando promover a BingX para conta real, e
   qual capital alocar - o usuário mencionou US$100 como valor inicial

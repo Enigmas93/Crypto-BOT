@@ -3,10 +3,10 @@ TimescaleDB. Skipped automatically if the database is unreachable (see
 conftest.py).
 
 Unlike other repositories, the tracked accounts ("paper", "shadow",
-"shadow_bingx", "momentum") are fixed by design - the dashboard has exactly
-four real accounts, not an arbitrary set a test can spin up under a random
-unique id the way risk/kill-switch/paper/shadow/momentum repository tests
-do. These
+"shadow_bingx", "momentum", "momentum_bingx") are fixed by design - the
+dashboard has exactly five real accounts, not an arbitrary set a test can
+spin up under a random unique id the way risk/kill-switch/paper/shadow/
+momentum repository tests do. These
 tests therefore assert response SHAPE and status codes rather than exact
 values (the real account state changes as other work in this session
 runs), and only exercise write-path validation (bad input, not-currently-
@@ -36,7 +36,7 @@ async def test_overview_returns_both_tracked_accounts(client):
     resp = await client.get("/api/overview")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body["accounts"].keys()) == {"paper", "shadow", "shadow_bingx", "momentum"}
+    assert set(body["accounts"].keys()) == {"paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx"}
     for account in body["accounts"].values():
         assert "initialized" in account
 
@@ -50,8 +50,9 @@ async def test_positions_returns_paper_shadow_and_momentum_lists(client):
     assert isinstance(body["shadow"], list)
     assert isinstance(body["shadow_bingx"], list)
     assert isinstance(body["momentum"], list)
+    assert isinstance(body["momentum_bingx"], list)
     # Momentum has no fixed take_profit_price - it exits via trailing stop
-    for position in body["momentum"]:
+    for position in body["momentum"] + body["momentum_bingx"]:
         assert "take_profit_price" not in position
         assert "momentum_score" in position
 
@@ -136,6 +137,16 @@ async def test_trades_returns_a_list_for_momentum(client):
 
 
 @pytest.mark.asyncio
+async def test_trades_returns_a_list_for_momentum_bingx(client):
+    resp = await client.get("/api/trades", params={"account": "momentum_bingx", "limit": 5})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account"] == "momentum_bingx"
+    assert isinstance(body["trades"], list)
+    assert len(body["trades"]) <= 5
+
+
+@pytest.mark.asyncio
 async def test_journal_merges_all_tracked_accounts_sorted_by_closed_at(client):
     resp = await client.get("/api/journal", params={"limit": 10})
     assert resp.status_code == 200
@@ -144,7 +155,7 @@ async def test_journal_merges_all_tracked_accounts_sorted_by_closed_at(client):
     assert isinstance(entries, list)
     assert len(entries) <= 10
     for entry in entries:
-        assert entry["account"] in ("paper", "shadow", "shadow_bingx", "momentum")
+        assert entry["account"] in ("paper", "shadow", "shadow_bingx", "momentum", "momentum_bingx")
         assert "symbol" in entry
         assert "net_pnl" in entry
     # newest first

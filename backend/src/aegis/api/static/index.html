@@ -80,6 +80,11 @@
       <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop (segurança)</th><th>Momentum</th></tr></thead>
         <tbody id="positions-momentum"></tbody></table>
     </div>
+    <div class="card">
+      <h2>Posições abertas — Momentum BingX (VST/testnet)</h2>
+      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Qtd</th><th>Stop (segurança)</th><th>Momentum</th></tr></thead>
+        <tbody id="positions-momentum_bingx"></tbody></table>
+    </div>
   </div>
 
   <div class="grid">
@@ -106,6 +111,14 @@
       <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
         <tbody id="trades-momentum"></tbody></table>
     </div>
+    <div class="card">
+      <h2>Trades recentes — Momentum BingX (VST/testnet)</h2>
+      <table><thead><tr><th>Símbolo</th><th>Lado</th><th>Saída</th><th>PnL</th><th>R</th></tr></thead>
+        <tbody id="trades-momentum_bingx"></tbody></table>
+    </div>
+  </div>
+
+  <div class="grid">
     <div class="card">
       <h2>Market Scanner — candidatos Momentum</h2>
       <table><thead><tr><th>Símbolo</th><th>Momentum</th><th>Var. 24h</th><th>Volume 24h</th></tr></thead>
@@ -195,7 +208,7 @@ function renderOverview(accounts) {
       ? `<span class="pill crit">DISPARADO</span> <button class="danger" onclick="resetKillSwitch('${accountId}')">Reset</button>`
       : `<span class="pill ok">Normal</span>`;
     card.innerHTML = `
-      <h2>${accountId}${accountId === 'shadow' || accountId === 'momentum' ? ' (testnet)' : ''}${accountId === 'shadow_bingx' ? ' (VST/testnet)' : ''}</h2>
+      <h2>${accountId}${accountId === 'shadow' || accountId === 'momentum' ? ' (testnet)' : ''}${accountId === 'shadow_bingx' || accountId === 'momentum_bingx' ? ' (VST/testnet)' : ''}</h2>
       <div class="tiles">
         <div class="tile"><div class="tl">Equity</div><div class="tv">${fmtMoney(acc.equity)}</div></div>
         <div class="tile"><div class="tl">Drawdown</div><div class="tv"><span class="pill ${ddClass}">${fmtPct(acc.drawdown_pct)}</span></div></div>
@@ -222,8 +235,8 @@ function renderPositions(tbodyId, positions) {
     </tr>`).join('');
 }
 
-function renderMomentumPositions(positions) {
-  const tbody = el('positions-momentum');
+function renderMomentumPositions(tbodyId, positions) {
+  const tbody = el(tbodyId);
   if (!positions.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Nenhuma posição aberta</td></tr>'; return; }
   tbody.innerHTML = positions.map(p => `
     <tr>
@@ -349,13 +362,14 @@ function renderHealth(rows) {
 
 async function refresh() {
   try {
-    const [overview, positions, tradesPaper, tradesShadow, tradesShadowBingx, tradesMomentum, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, journal, backtests, health] = await Promise.all([
+    const [overview, positions, tradesPaper, tradesShadow, tradesShadowBingx, tradesMomentum, tradesMomentumBingx, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, journal, backtests, health] = await Promise.all([
       fetch('/api/overview').then(r => r.json()),
       fetch('/api/positions').then(r => r.json()),
       fetch('/api/trades?account=paper&limit=15').then(r => r.json()),
       fetch('/api/trades?account=shadow&limit=15').then(r => r.json()),
       fetch('/api/trades?account=shadow_bingx&limit=15').then(r => r.json()),
       fetch('/api/trades?account=momentum&limit=15').then(r => r.json()),
+      fetch('/api/trades?account=momentum_bingx&limit=15').then(r => r.json()),
       fetch('/api/momentum/scan').then(r => r.json()),
       fetch('/api/news/asset-status').then(r => r.json()),
       fetch('/api/news/recent?limit=15').then(r => r.json()),
@@ -368,11 +382,13 @@ async function refresh() {
     renderPositions('positions-paper', positions.paper);
     renderPositions('positions-shadow', positions.shadow);
     renderPositions('positions-shadow_bingx', positions.shadow_bingx);
-    renderMomentumPositions(positions.momentum);
+    renderMomentumPositions('positions-momentum', positions.momentum);
+    renderMomentumPositions('positions-momentum_bingx', positions.momentum_bingx);
     renderTrades('trades-paper', tradesPaper.trades);
     renderTrades('trades-shadow', tradesShadow.trades);
     renderTrades('trades-shadow_bingx', tradesShadowBingx.trades);
     renderTrades('trades-momentum', tradesMomentum.trades);
+    renderTrades('trades-momentum_bingx', tradesMomentumBingx.trades);
     renderMomentumScan(momentumScan.candidates);
     renderNewsAssetStatus(newsAssetStatus.statuses);
     renderNewsRecent(newsRecent.items);
