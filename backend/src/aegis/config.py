@@ -131,12 +131,28 @@ class Settings(BaseSettings):
     # dynamically each cycle from Binance's real 24h stats.
     momentum_account_id: str = "momentum"
     momentum_interval: str = "15m"
-    momentum_min_quote_volume: float = 500_000_000.0  # 24h USDT volume floor
+    momentum_min_quote_volume: float = 500_000_000.0  # 24h USDT volume floor (Binance scanner only)
     momentum_top_n: int = 5
     momentum_scan_interval_seconds: float = 900.0  # how often to re-rank candidates
     momentum_poll_interval_seconds: float = 30.0  # how often to check open positions / act on candidates
     momentum_trailing_callback_rate_pct: float = 2.0
     momentum_trailing_activation_pct: float = 1.5  # profit % before the trailing leg arms itself
+    # BingX's own Momentum scanner needs its OWN floor, not `momentum_min_quote_volume`
+    # (Fase 17i) - found live 2026-09-25 that reusing Binance's $500M floor
+    # unchanged left BingX's scanner structurally unable to find speculative
+    # candidates: verified against BingX's real 24h tickers that only 3 pairs
+    # on the entire exchange ever clear $500M (BTC-USDT, SOL-USDT, and the
+    # NCCO synthetic-asset pair excluded by the scanner's own filter), so the
+    # "moonshot" scanner had been silently reduced to ranking BTC/SOL against
+    # each other every cycle - both near-zero momentum, since majors don't
+    # move like altcoins do - while real BingX movers on the day this was
+    # found (PHA +83.8%, SAGA -42.9%, SUI +14.4%, ENA +17.9%, JTO +13.7%,
+    # all with $5M-45M in real 24h volume) never entered the candidate pool
+    # at all. $10M keeps the "liquid pairs only, capital preservation first"
+    # philosophy (spec section 9) intact for BingX's own market depth while
+    # actually surfacing the tokens this scanner exists to find (~75 BingX
+    # pairs clear $10M vs. only 2 non-synthetic pairs at $500M).
+    bingx_momentum_min_quote_volume: float = 10_000_000.0
 
     # Event Risk Engine / CoinMarketCal (Fase 15b) -------------------------------
     # Free tier, no anonymous access. Free signup: https://coinmarketcal.com/developer

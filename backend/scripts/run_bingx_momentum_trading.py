@@ -63,7 +63,7 @@ _ACCOUNT_SUFFIX = "momentum_bingx"
 def _build_config(account_id: str, settings) -> MomentumConfig:
     return MomentumConfig(
         interval=settings.momentum_interval, account_id=account_id,
-        min_quote_volume=settings.momentum_min_quote_volume, top_n=settings.momentum_top_n,
+        min_quote_volume=settings.bingx_momentum_min_quote_volume, top_n=settings.momentum_top_n,
         trailing_callback_rate_pct=settings.momentum_trailing_callback_rate_pct,
         trailing_activation_pct=settings.momentum_trailing_activation_pct,
     )

@@ -68,7 +68,7 @@ async def _main() -> None:
 
         log_event(_LOG, "step_1_scan", message="Ranking real liquid symbols by 24h momentum (BingX's own data)")
         tickers = await bingx_rest.get_24h_tickers()
-        candidates = rank_by_momentum(tickers, min_quote_volume=settings.momentum_min_quote_volume, top_n=5)
+        candidates = rank_by_momentum(tickers, min_quote_volume=settings.bingx_momentum_min_quote_volume, top_n=5)
         log_event(
             _LOG, "scan_result",
             candidates=[{"symbol": c.symbol, "momentum_score": round(c.momentum_score, 2),
