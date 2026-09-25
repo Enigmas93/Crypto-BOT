@@ -41,6 +41,13 @@ def combine_signals(
     weighted_sum = 0.0
     total_weight = 0.0
     for s in signals:
+        if s.insufficient_data:
+            # An abstention, not a vote (Fase 17h) - a strategy with no
+            # real opinion (missing required data) must not dilute every
+            # other strategy's weight just by being present in
+            # `strategy_ids`. Still returned in `strategy_signals` below
+            # for transparency/logging, just excluded from the math.
+            continue
         w = weights.get(s.strategy_id, 1.0)
         weighted_sum += _DIRECTION[s.signal] * s.strength * w
         total_weight += w

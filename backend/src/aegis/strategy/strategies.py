@@ -23,6 +23,20 @@ candidates have derivatives/liquidation data collected anywhere in this
 codebase - a real, disclosed limitation, not a silent gap: it will start
 contributing real votes there only once that collection exists.
 
+Fase 17h, found live within hours of activating it: an "inert" 4th
+strategy is not actually harmless. `ConfluenceEngine.combine_signals`
+divides by the total weight of every signal it's handed, so a strategy
+that abstains almost always (no data on BingX/Momentum, and historically
+starved of real liquidation volume even on Binance testnet - see above)
+was silently diluting the OTHER three strategies' combined vote by ~25% on
+every single symbol/account, real data or not. That pushed borderline
+signals that used to clear `decision_threshold` below it, and genuinely
+silenced entries for hours. Fixed by giving `StrategySignal` an
+`insufficient_data` flag (true only when required INPUT DATA is missing,
+never when data exists but conditions just don't align) that
+`combine_signals` now excludes from its weighted average entirely - an
+abstention no longer counts as a vote.
+
 EVENT_REACTION's own limitation, different in kind: `news_asset_status`
 (aegis/db/news_repository.py) is a single upserted row per asset - the
 CURRENT verdict, not a time series. That's correct for Shadow/Paper/
@@ -65,8 +79,11 @@ ALL_STRATEGY_IDS = (
 )
 
 
-def _no_trade(strategy_id: str, snapshot: TechnicalSnapshot, reasons: list[str]) -> StrategySignal:
-    return StrategySignal(strategy_id, snapshot.symbol, snapshot.interval, snapshot.as_of, "NO_TRADE", 0.0, reasons)
+def _no_trade(
+    strategy_id: str, snapshot: TechnicalSnapshot, reasons: list[str], insufficient_data: bool = False,
+) -> StrategySignal:
+    return StrategySignal(strategy_id, snapshot.symbol, snapshot.interval, snapshot.as_of, "NO_TRADE", 0.0, reasons,
+                           insufficient_data=insufficient_data)
 
 
 def evaluate_trend_pullback(
@@ -80,7 +97,7 @@ def evaluate_trend_pullback(
     structure)."""
     required = (snapshot.close, snapshot.ema_50, snapshot.ema_200, snapshot.adx_14, snapshot.rsi_14)
     if snapshot.as_of is None or any(v is None for v in required):
-        return _no_trade(STRATEGY_TREND_PULLBACK, snapshot, ["INSUFFICIENT_DATA"])
+        return _no_trade(STRATEGY_TREND_PULLBACK, snapshot, ["INSUFFICIENT_DATA"], insufficient_data=True)
 
     trending = snapshot.adx_14 >= adx_threshold
     pullback = rsi_pullback_low <= snapshot.rsi_14 <= rsi_pullback_high
@@ -115,7 +132,7 @@ def evaluate_breakout(snapshot: TechnicalSnapshot, volume_zscore_threshold: floa
     `market_structure`, already anti-lookahead by its fractal design)
     confirmed by volume expansion. Never a breakout on thin volume."""
     if snapshot.as_of is None or snapshot.volume_zscore_20 is None:
-        return _no_trade(STRATEGY_BREAKOUT, snapshot, ["INSUFFICIENT_DATA"])
+        return _no_trade(STRATEGY_BREAKOUT, snapshot, ["INSUFFICIENT_DATA"], insufficient_data=True)
 
     volume_confirmed = snapshot.volume_zscore_20 >= volume_zscore_threshold
     strength = min(100.0, max(0.0, 50.0 + snapshot.volume_zscore_20 * 15.0))
@@ -145,7 +162,7 @@ def evaluate_mean_reversion(
     RSI just means a strong trend) AND meaningful distance from VWAP."""
     required = (snapshot.close, snapshot.rsi_14, snapshot.adx_14, snapshot.distance_from_vwap_pct)
     if snapshot.as_of is None or any(v is None for v in required):
-        return _no_trade(STRATEGY_MEAN_REVERSION, snapshot, ["INSUFFICIENT_DATA"])
+        return _no_trade(STRATEGY_MEAN_REVERSION, snapshot, ["INSUFFICIENT_DATA"], insufficient_data=True)
 
     ranging = snapshot.adx_14 <= adx_range_max
     overbought = snapshot.rsi_14 >= rsi_overbought and snapshot.distance_from_vwap_pct >= vwap_distance_threshold
@@ -206,11 +223,18 @@ def evaluate_liquidation_squeeze(
     (if either) actually has an edge.
     """
     if snapshot.as_of is None:
-        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["INSUFFICIENT_DATA"])
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["INSUFFICIENT_DATA"], insufficient_data=True)
     if derivatives_snapshot is None or derivatives_snapshot.funding_zscore is None:
-        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["no funding rate data"])
+        # This is an ABSTENTION, not a real "no trade" opinion (Fase 17h) -
+        # critical distinction: BingX/Momentum never supply this snapshot
+        # at all (see module docstring), so without `insufficient_data`
+        # this strategy would silently dilute every OTHER strategy's vote
+        # by ~25% on every single cycle, on every account, forever - found
+        # live 2026-09-25 doing exactly that and silencing real entries for
+        # hours after this strategy was activated.
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["no funding rate data"], insufficient_data=True)
     if liquidation_snapshot is None or liquidation_snapshot.squeeze_score is None:
-        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["no liquidation data"])
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["no liquidation data"], insufficient_data=True)
 
     funding_z = derivatives_snapshot.funding_zscore
     oi_imbalance_z = derivatives_snapshot.global_long_short_ratio_zscore
@@ -222,7 +246,7 @@ def evaluate_liquidation_squeeze(
     if squeeze_score < squeeze_score_threshold:
         return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["squeeze score below threshold"])
     if oi_imbalance_z is None or liq_imbalance is None:
-        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["INSUFFICIENT_DATA"])
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["INSUFFICIENT_DATA"], insufficient_data=True)
 
     strength = min(100.0, max(0.0, squeeze_score))
 
@@ -273,7 +297,7 @@ def evaluate_event_reaction(
     if news_status is None or news_status.status != "CONFIRMED" or news_status.dominant_sentiment is None:
         return _no_trade(STRATEGY_EVENT_REACTION, snapshot, ["no confirmed news event for this asset"])
     if snapshot.as_of is None or snapshot.roc_12 is None:
-        return _no_trade(STRATEGY_EVENT_REACTION, snapshot, ["INSUFFICIENT_DATA"])
+        return _no_trade(STRATEGY_EVENT_REACTION, snapshot, ["INSUFFICIENT_DATA"], insufficient_data=True)
 
     sentiment = news_status.dominant_sentiment
     strength = min(100.0, news_status.distinct_sources * 25.0)
@@ -312,10 +336,10 @@ def evaluate_all(
     liquidation_snapshot: LiquidationSnapshot | None = None,
 ) -> list[StrategySignal]:
     """`derivatives_snapshot`/`liquidation_snapshot` are only consumed by
-    STRATEGY_LIQUIDATION_SQUEEZE - never required unless a caller
-    explicitly opts that strategy into `strategy_ids` (it is NOT part of
-    ALL_STRATEGY_IDS - see module docstring), so Paper/Shadow/Momentum's
-    existing calls (which pass neither) are unaffected."""
+    STRATEGY_LIQUIDATION_SQUEEZE - callers that don't pass them (BingX,
+    Momentum) simply get an `insufficient_data=True` NO_TRADE from it,
+    which `combine_signals` excludes from the confluence math entirely
+    (Fase 17h) rather than let it dilute every other strategy's vote."""
     signals = []
     for sid in strategy_ids:
         if sid == STRATEGY_EVENT_REACTION:

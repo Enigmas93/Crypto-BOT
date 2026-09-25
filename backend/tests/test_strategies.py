@@ -83,6 +83,19 @@ def test_trend_pullback_insufficient_data_when_ema200_missing():
     signal = evaluate_trend_pullback(snapshot)
     assert signal.signal == "NO_TRADE"
     assert "INSUFFICIENT_DATA" in signal.reasons
+    # Fase 17h: missing data must be a flagged abstention (excluded from
+    # ConfluenceEngine's weighted average), not just a zero-strength vote.
+    assert signal.insufficient_data is True
+
+
+def test_trend_pullback_genuine_no_trade_is_not_flagged_as_an_abstention():
+    # Real data exists and was evaluated - this must count as a real vote
+    # in confluence, unlike a missing-data abstention.
+    snapshot = _snapshot(close=110.0, ema_50=105.0, ema_200=100.0, adx_14=10.0, rsi_14=50.0,
+                          market_structure_trend="UPTREND")
+    signal = evaluate_trend_pullback(snapshot)
+    assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is False
 
 
 def test_trend_pullback_no_data_snapshot_never_raises():
@@ -111,6 +124,14 @@ def test_breakout_no_trade_without_volume_confirmation():
     signal = evaluate_breakout(snapshot)
     assert signal.signal == "NO_TRADE"
     assert "volume not confirmed" in signal.reasons
+    assert signal.insufficient_data is False  # real data, genuinely no signal - a real vote
+
+
+def test_breakout_insufficient_data_is_flagged_as_an_abstention():
+    snapshot = _snapshot(breakout=True, breakdown=False, volume_zscore_20=None)
+    signal = evaluate_breakout(snapshot)
+    assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is True
 
 
 def test_breakout_no_trade_when_no_structural_break():
@@ -143,7 +164,16 @@ def test_mean_reversion_never_fires_on_rsi_alone_in_a_trending_market():
     # spec section 51: "Nunca vender somente porque RSI > 70" - here ADX is
     # high (trending), so overbought RSI must NOT trigger a reversion short
     snapshot = _snapshot(close=103.0, rsi_14=80.0, adx_14=35.0, distance_from_vwap_pct=3.0)
-    assert evaluate_mean_reversion(snapshot).signal == "NO_TRADE"
+    signal = evaluate_mean_reversion(snapshot)
+    assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is False  # real data, genuinely no signal - a real vote
+
+
+def test_mean_reversion_insufficient_data_is_flagged_as_an_abstention():
+    snapshot = _snapshot(close=103.0, rsi_14=80.0, adx_14=None, distance_from_vwap_pct=3.0)
+    signal = evaluate_mean_reversion(snapshot)
+    assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is True
 
 
 def test_mean_reversion_no_trade_when_rsi_extreme_but_vwap_distance_small():
@@ -189,6 +219,8 @@ def test_liquidation_squeeze_never_fires_on_funding_alone():
     liquidation = _liquidation_snapshot(liquidation_imbalance=0.5, squeeze_score=10.0)
     signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
     assert signal.signal == "NO_TRADE"
+    # Real data existed and was evaluated - a genuine vote, not an abstention.
+    assert signal.insufficient_data is False
 
 
 def test_liquidation_squeeze_no_trade_when_funding_not_extreme():
@@ -197,6 +229,7 @@ def test_liquidation_squeeze_no_trade_when_funding_not_extreme():
     liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=90.0)
     signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
     assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is False
 
 
 def test_liquidation_squeeze_no_trade_when_directions_disagree():
@@ -207,13 +240,20 @@ def test_liquidation_squeeze_no_trade_when_directions_disagree():
     liquidation = _liquidation_snapshot(liquidation_imbalance=-0.6, squeeze_score=75.0)
     signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
     assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is False
 
 
 def test_liquidation_squeeze_no_trade_without_derivatives_data():
+    # Fase 17h regression: THIS is the exact shape returned on every BingX
+    # account and on most Binance cycles too (no real squeeze happening) -
+    # must be flagged as an abstention or it silently dilutes every other
+    # strategy's confluence vote (the real bug, found live within hours of
+    # activating this strategy).
     snapshot = _snapshot()
     liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=75.0)
     signal = evaluate_liquidation_squeeze(snapshot, None, liquidation)
     assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is True
 
 
 def test_liquidation_squeeze_no_trade_without_liquidation_data():
@@ -221,6 +261,7 @@ def test_liquidation_squeeze_no_trade_without_liquidation_data():
     derivatives = _derivatives_snapshot(funding_zscore=2.5, global_long_short_ratio_zscore=1.8)
     signal = evaluate_liquidation_squeeze(snapshot, derivatives, None)
     assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is True
 
 
 def test_liquidation_squeeze_no_trade_when_squeeze_score_is_none():
@@ -229,6 +270,7 @@ def test_liquidation_squeeze_no_trade_when_squeeze_score_is_none():
     liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=None)
     signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
     assert signal.signal == "NO_TRADE"
+    assert signal.insufficient_data is True
 
 
 def test_liquidation_squeeze_is_included_in_evaluate_all_by_default():
@@ -243,6 +285,35 @@ def test_liquidation_squeeze_is_included_in_evaluate_all_by_default():
     assert STRATEGY_LIQUIDATION_SQUEEZE in {s.strategy_id for s in signals}
     squeeze_signal = next(s for s in signals if s.strategy_id == STRATEGY_LIQUIDATION_SQUEEZE)
     assert squeeze_signal.signal == "NO_TRADE"
+    # Fase 17h: without derivatives_snapshot/liquidation_snapshot (exactly
+    # what every real caller that doesn't wire market_context gets), this
+    # MUST be an abstention - otherwise it silently dilutes the other three
+    # strategies' confluence vote on every account, forever.
+    assert squeeze_signal.insufficient_data is True
+
+
+def test_evaluate_all_default_call_produces_no_dilution_from_the_inert_squeeze_strategy():
+    # End-to-end regression for the real production bug (Fase 17h): calling
+    # evaluate_all the exact way every BingX/Momentum engine does (no
+    # derivatives/liquidation data) must yield the SAME confluence result
+    # with or without LIQUIDATION_SQUEEZE in strategy_ids - it must never
+    # be able to silently weaken a real 3-strategy signal just by being
+    # present and unable to vote.
+    from aegis.strategy.confluence import combine_signals
+
+    snapshot = _snapshot(close=110.0, ema_50=105.0, ema_200=100.0, adx_14=25.0, rsi_14=50.0,
+                          market_structure_trend="UPTREND", breakout=True, breakdown=False,
+                          volume_zscore_20=2.0, last_swing_high=105.0, distance_from_vwap_pct=0.0)
+
+    three_strategy_signals = evaluate_all(
+        snapshot, strategy_ids=(STRATEGY_TREND_PULLBACK, STRATEGY_BREAKOUT, STRATEGY_MEAN_REVERSION),
+    )
+    four_strategy_signals = evaluate_all(snapshot)  # ALL_STRATEGY_IDS, includes LIQUIDATION_SQUEEZE
+
+    result_three = combine_signals(three_strategy_signals)
+    result_four = combine_signals(four_strategy_signals)
+    assert result_three.net_score == pytest.approx(result_four.net_score)
+    assert result_three.decision == result_four.decision
 
 
 def test_liquidation_squeeze_can_be_explicitly_requested_from_evaluate_all():
