@@ -31,6 +31,7 @@ from aegis.api.dependencies import (
     get_risk_repo,
     get_settings_dep,
     get_shadow_repo,
+    get_walk_forward_repo,
 )
 from aegis.config import Settings
 from aegis.db.backtest_repository import BacktestRepository
@@ -46,9 +47,12 @@ from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
 from aegis.db.shadow_repository import ShadowRepository
+from aegis.db.walk_forward_repository import WalkForwardRepository
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrderError, BingXRestError
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceOrderError, BinanceRestError
+from aegis.regime.service import classify_regime
 from aegis.risk.rules import compute_drawdown_pct
+from aegis.technical.service import compute_snapshot
 
 router = APIRouter()
 
@@ -363,6 +367,24 @@ async def get_backtest_trades(run_id: int, backtest_repo: BacktestRepository = D
     return {"run": run, "trades": await backtest_repo.fetch_trades(run_id)}
 
 
+# -- walk-forward validation (Fase 17) ---------------------------------------
+@router.get("/walk-forward")
+async def get_walk_forward_runs(
+    limit: int = 20, walk_forward_repo: WalkForwardRepository = Depends(get_walk_forward_repo),
+) -> dict:
+    return {"runs": await walk_forward_repo.fetch_recent_runs(limit=limit)}
+
+
+@router.get("/walk-forward/{run_id}")
+async def get_walk_forward_run(
+    run_id: int, walk_forward_repo: WalkForwardRepository = Depends(get_walk_forward_repo),
+) -> dict:
+    run = await walk_forward_repo.fetch_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"walk-forward run {run_id} not found")
+    return run
+
+
 # -- kill switch ------------------------------------------------------------
 @router.get("/kill-switch/{account_id}/events")
 async def get_kill_switch_events(
@@ -576,6 +598,27 @@ async def set_bingx_mode(
         )
     await bingx_account_repo.set_mode(body.mode)
     return {"mode": body.mode}
+
+
+# -- market regime (Fase 17 - RegimeEngine) ------------------------------------
+@router.get("/market/regime")
+async def get_regime_summary(
+    settings: Settings = Depends(get_settings_dep), candle_repo: CandleRepository = Depends(get_candle_repo),
+) -> dict:
+    """A feature, not a signal (same discipline as /market/derivatives and
+    /market/liquidations) - computed on demand from the same candle history
+    every trading engine already reads, never persisted, never fed into any
+    strategy's gating logic here."""
+    rows = []
+    for symbol in settings.symbols:
+        df = await candle_repo.fetch_ohlcv(symbol, _TRADING_INTERVAL, limit=250, closed_only=True)
+        snapshot = compute_snapshot(symbol, _TRADING_INTERVAL, df)
+        regime = classify_regime(snapshot)
+        rows.append({
+            "symbol": symbol, "trend_regime": regime.trend_regime, "volatility_regime": regime.volatility_regime,
+            "adx_14": regime.adx_14, "volatility_percentile_100": regime.volatility_percentile_100,
+        })
+    return {"interval": _TRADING_INTERVAL, "symbols": rows}
 
 
 def _stale_threshold_seconds(interval: str) -> float:

@@ -184,7 +184,7 @@
       <div class="grid g4" id="risk-logs-accounts"></div>
 
       <div class="section-title">Inteligência de Mercado</div>
-      <div class="grid g3">
+      <div class="grid g4">
         <div class="card"><h2>Macro (FRED/BLS/BEA)</h2>
           <div class="table-scroll"><table><thead><tr><th>Série</th><th>Valor</th><th>Var.</th><th>Data</th><th>Qualidade</th></tr></thead>
             <tbody id="macro-table"></tbody></table></div>
@@ -196,6 +196,10 @@
         <div class="card"><h2>Liquidações (1h)</h2>
           <div class="table-scroll"><table><thead><tr><th>Símbolo</th><th>Longs liq.</th><th>Shorts liq.</th><th>Eventos</th></tr></thead>
             <tbody id="liquidations-table"></tbody></table></div>
+        </div>
+        <div class="card"><h2>Regime de Mercado</h2>
+          <div class="table-scroll"><table><thead><tr><th>Símbolo</th><th>Tendência</th><th>ADX</th><th>Volatilidade</th></tr></thead>
+            <tbody id="regime-table"></tbody></table></div>
         </div>
       </div>
 
@@ -213,6 +217,10 @@
       <div class="section-title">Backtests <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-faint)">(clique numa linha para ver os trades)</span></div>
       <div class="grid full"><div class="card"><table><thead><tr><th>Símbolo</th><th>Trades</th><th>Win Rate</th><th>PnL líq.</th><th>Kill Switch</th><th>Data</th></tr></thead>
         <tbody id="backtests-table"></tbody></table></div></div>
+
+      <div class="section-title">Walk-Forward <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-faint)">(consistência do mesmo backtest em janelas sequenciais diferentes)</span></div>
+      <div class="grid full"><div class="card"><table><thead><tr><th>Símbolo</th><th>Folds</th><th>% lucrativos</th><th>PnL médio/fold</th><th>Pior fold</th><th>Kill Switch</th><th>Data</th></tr></thead>
+        <tbody id="walk-forward-table"></tbody></table></div></div>
     </div>
 
   </div>

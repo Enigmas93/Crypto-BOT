@@ -114,10 +114,12 @@ let cache = {
   newsRecent: { items: [] },
   eventsUpcoming: { events: [] },
   backtests: { runs: [] },
+  walkForward: { runs: [] },
   health: { candles: [] },
   macro: { series: [] },
   derivatives: { symbols: [] },
   liquidations: { symbols: [] },
+  regime: { symbols: [] },
   killSwitchEvents: {}, // account_id -> events[]
   tradesByAccount: {}, // account_id -> trades[]
   bingxSettings: { mode: "demo", credentials_configured: false, updated_at: null },
@@ -583,6 +585,7 @@ function renderRiskLogsTab() {
   renderNews();
   renderEvents();
   renderBacktests();
+  renderWalkForward();
   renderMarketIntelligence();
 }
 
@@ -658,6 +661,23 @@ function renderBacktests() {
   }).join("");
 }
 
+function renderWalkForward() {
+  const tbody = el("walk-forward-table");
+  if (!tbody) return;
+  const runs = cache.walkForward.runs || [];
+  if (!runs.length) { tbody.innerHTML = `<tr><td colspan="7" class="empty">Sem walk-forward runs ainda — rode scripts/run_walk_forward.py</td></tr>`; return; }
+  tbody.innerHTML = runs.map((r) => `
+    <tr>
+      <td class="num">${r.symbol}</td>
+      <td class="num">${r.fold_count}</td>
+      <td><span class="pill ${r.profitable_fold_pct >= 0.6 ? "ok" : r.profitable_fold_pct >= 0.4 ? "warn" : "crit"}">${fmtPct(r.profitable_fold_pct)}</span></td>
+      <td class="num ${r.average_net_pnl >= 0 ? "up" : "down"}">${fmtMoney(r.average_net_pnl)}</td>
+      <td class="num down">${fmtMoney(r.worst_fold_net_pnl)}</td>
+      <td>${r.any_fold_kill_switch_triggered ? '<span class="pill crit">DISPAROU</span>' : '<span class="pill ok">OK</span>'}</td>
+      <td class="num">${fmtTime(r.created_at)}</td>
+    </tr>`).join("");
+}
+
 function renderMarketIntelligence() {
   const macroBody = el("macro-table");
   if (macroBody) {
@@ -686,6 +706,27 @@ function renderMarketIntelligence() {
       <td class="num up">${fmtMoney(s.short_notional)}</td>
       <td class="num">${s.long_count + s.short_count}</td></tr>`).join("")
       || `<tr><td colspan="4" class="empty">Sem liquidações na última hora</td></tr>`;
+  }
+  const regimeBody = el("regime-table");
+  if (regimeBody) {
+    const trendPill = (t) => (
+      t === "TRENDING_UP" ? '<span class="pill long">ALTA</span>'
+      : t === "TRENDING_DOWN" ? '<span class="pill short">BAIXA</span>'
+      : t === "RANGING" ? '<span class="pill neutral">LATERAL</span>'
+      : '<span class="pill neutral">INDEFINIDO</span>'
+    );
+    const volPill = (v) => (
+      v === "HIGH_VOLATILITY" ? '<span class="pill warn">ALTA</span>'
+      : v === "LOW_VOLATILITY" ? '<span class="pill ok">BAIXA</span>'
+      : v === "NORMAL_VOLATILITY" ? '<span class="pill neutral">NORMAL</span>'
+      : "—"
+    );
+    regimeBody.innerHTML = (cache.regime.symbols || []).map((s) => `
+      <tr><td class="num">${s.symbol}</td>
+      <td>${trendPill(s.trend_regime)}</td>
+      <td class="num">${s.adx_14 !== null ? fmtNum(s.adx_14, 1) : "—"}</td>
+      <td>${volPill(s.volatility_regime)}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty">Sem dados</td></tr>`;
   }
 }
 
@@ -812,7 +853,7 @@ function renderAll() {
 // -- data refresh --------------------------------------------------------
 async function refreshData() {
   const accountIds = Object.keys(ACCOUNTS);
-  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, health, macro, derivatives, liquidations, bingxSettings] = await Promise.all([
+  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health, macro, derivatives, liquidations, regime, bingxSettings] = await Promise.all([
     getJSON("/api/overview"),
     getJSON("/api/positions"),
     getJSON("/api/journal?limit=50"),
@@ -821,10 +862,12 @@ async function refreshData() {
     getJSON("/api/news/recent?limit=15"),
     getJSON("/api/events/upcoming?limit=20"),
     getJSON("/api/backtests?limit=15"),
+    getJSON("/api/walk-forward?limit=15"),
     getJSON("/api/system/health"),
     getJSON("/api/market/macro"),
     getJSON("/api/market/derivatives"),
     getJSON("/api/market/liquidations"),
+    getJSON("/api/market/regime"),
     getJSON("/api/settings/bingx").catch(() => cache.bingxSettings),
   ]);
   const equityHistoryPairs = await Promise.all(
@@ -843,8 +886,8 @@ async function refreshData() {
 
   cache = {
     overview, positions, equityHistory, journal, momentumScan,
-    newsAssetStatus, newsRecent, eventsUpcoming, backtests, health,
-    macro, derivatives, liquidations, killSwitchEvents, bingxSettings,
+    newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health,
+    macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings,
     tradesByAccount: cache.tradesByAccount,
   };
 }

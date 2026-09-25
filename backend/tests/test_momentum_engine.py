@@ -319,6 +319,33 @@ async def test_position_closed_via_hard_stop():
 
 
 @pytest.mark.asyncio
+async def test_position_closed_computes_correlated_exposure_across_remaining_open_symbols():
+    # Regression (Fase 17 - PortfolioCorrelationEngine): closing ETHUSDT
+    # while two other symbols stay open, all reading the SAME klines from
+    # the fake REST client (perfectly correlated), must report
+    # correlated_exposure_pct as 1.0 for the two remaining positions - not
+    # the 0.0 default this always silently reported before.
+    closes, volume = _consolidation_then_breakout()
+    klines = _klines(closes, volume)
+    engine, momentum_repo, risk_repo, _, execution = _engine(klines)
+    config = MomentumConfig()
+    for symbol, stop_id, trailing_id in (("ETHUSDT", 101, 102), ("SOLUSDT", 201, 202), ("XRPUSDT", 301, 302)):
+        momentum_repo.positions[(config.account_id, symbol)] = MomentumPosition(
+            side="LONG", entry_time=datetime(2026, 1, 1, tzinfo=UTC), entry_price=100.0, quantity=0.01,
+            stop_order_id=stop_id, trailing_order_id=trailing_id, stop_price=96.0, risk_amount=1.0,
+            confluence_score=40.0, momentum_score=15.0, reasons=["test"],
+        )
+    execution.position_amt = 0.0
+    execution.set_order_status(101, "FILLED", avg_price=96.0)
+    execution.set_order_status(102, "NEW")
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+
+    assert result["action"] == "POSITION_CLOSED"
+    assert risk_repo.exposure_calls[-1] == (config.account_id, 2, pytest.approx(1.0))
+
+
+@pytest.mark.asyncio
 async def test_position_closed_via_trailing_stop():
     closes, volume = _consolidation_then_breakout()
     klines = _klines(closes, volume)

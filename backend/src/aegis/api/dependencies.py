@@ -21,6 +21,7 @@ from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
 from aegis.db.shadow_repository import ShadowRepository
+from aegis.db.walk_forward_repository import WalkForwardRepository
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
 
@@ -85,3 +86,7 @@ def get_liquidation_repo(request: Request) -> LiquidationRepository:
 
 def get_macro_repo(request: Request) -> MacroRepository:
     return MacroRepository(request.app.state.pool)
+
+
+def get_walk_forward_repo(request: Request) -> WalkForwardRepository:
+    return WalkForwardRepository(request.app.state.pool)

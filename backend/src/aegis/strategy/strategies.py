@@ -8,19 +8,26 @@ to be). TREND_PULLBACK/BREAKOUT/MEAN_REVERSION take only a
 WAIT_FOR_CONFIRMATION/CONFIRMED verdict) - still a pure function, still no
 I/O, the caller is responsible for fetching that status.
 
-LIQUIDATION_SQUEEZE remains unimplemented - checked live 2026-09-23 after
-the Liquidation Engine had been running continuously for months: the
+LIQUIDATION_SQUEEZE (`evaluate_liquidation_squeeze`, Fase 17) is now
+implemented and unit tested with synthetic data - the logic itself is
+correct - but is DELIBERATELY excluded from `ALL_STRATEGY_IDS`, same
+treatment as EVENT_REACTION below, for a documented reason found live
+2026-09-23: after the Liquidation Engine ran continuously for months, the
 `liquidations` table held zero genuine events for any of the real 7 traded
 symbols (every row that existed was leftover integration-test debris, now
-cleaned up and prevented from recurring - see tests/conftest.py). The
-engine, its WebSocket subscription and its filtering are all confirmed
-working correctly; Binance Futures TESTNET simply does not appear to
-generate meaningful forced-liquidation volume the way mainnet does (far
-less real leverage abuse against fake money). Building a strategy against
-a feed that has never once fired for these symbols would mean shipping
-untested logic dressed up as tested - it stays unimplemented until there
-is a real signal to build and validate it against, which likely means
-mainnet.
+cleaned up - see tests/conftest.py). The engine, its WebSocket subscription
+and its filtering are all confirmed working correctly; Binance Futures
+TESTNET simply does not appear to generate meaningful forced-liquidation
+volume the way mainnet does. Silently activating this strategy in Paper/
+Shadow/Momentum now would mean it sits there, tested only against
+fabricated inputs, waiting for a feed that has essentially never fired -
+exactly the "shipping untested logic dressed up as tested" this codebase
+avoids everywhere else. It can be explicitly opted into (`evaluate_all`
+takes it in `strategy_ids` and now also accepts `derivatives_snapshot`/
+`liquidation_snapshot`) for backtesting or manual research once there's
+real liquidation volume to validate it against - realistically once BingX
+Momentum (which does trade a real market) also collects liquidation data,
+which it does not yet.
 
 EVENT_REACTION's own limitation, different in kind: `news_asset_status`
 (aegis/db/news_repository.py) is a single upserted row per asset - the
@@ -44,6 +51,8 @@ before it will say anything but NO_TRADE (spec section 2).
 """
 from __future__ import annotations
 
+from aegis.derivatives.service import DerivativesSnapshot
+from aegis.liquidation.service import LiquidationSnapshot
 from aegis.news.conflict import AssetNewsStatus
 from aegis.strategy.models import StrategySignal
 from aegis.technical.service import TechnicalSnapshot
@@ -52,6 +61,7 @@ STRATEGY_TREND_PULLBACK = "TREND_PULLBACK"
 STRATEGY_BREAKOUT = "BREAKOUT"
 STRATEGY_MEAN_REVERSION = "MEAN_REVERSION"
 STRATEGY_EVENT_REACTION = "EVENT_REACTION"
+STRATEGY_LIQUIDATION_SQUEEZE = "LIQUIDATION_SQUEEZE"
 
 # EVENT_REACTION is intentionally excluded - see module docstring (no
 # point-in-time news history yet, so it can't be backtested honestly and
@@ -162,6 +172,92 @@ def evaluate_mean_reversion(
     return _no_trade(STRATEGY_MEAN_REVERSION, snapshot, ["no ranging+RSI-extreme+VWAP-distance confluence"])
 
 
+def evaluate_liquidation_squeeze(
+    snapshot: TechnicalSnapshot,
+    derivatives_snapshot: DerivativesSnapshot | None,
+    liquidation_snapshot: LiquidationSnapshot | None,
+    funding_extreme_zscore: float = 2.0,
+    squeeze_score_threshold: float = 60.0,
+) -> StrategySignal:
+    """spec section ~54 (03 - Liquidation / Squeeze): "Funding extremo +
+    desequilíbrio de OI + aceleração de liquidações -> SqueezeScore. Nunca
+    entra só por funding extremo." Three independent conditions, same
+    discipline as every other strategy here:
+      1. `funding_zscore` extreme in either direction - which side is
+         over-leveraged/crowded (spec's "funding extremo").
+      2. `global_long_short_ratio_zscore` (this codebase's OI-side
+         imbalance proxy - Binance's OI endpoint has no long/short split,
+         unlike the ratio endpoints) extreme in the SAME direction as
+         funding - confirms the crowding isn't just a funding-rate blip.
+      3. `liquidation_imbalance` (which side is actually getting flushed
+         right now) also pointing the same way, AND `squeeze_score`
+         (already a 0-100 composite of liquidation notional z-score +
+         imbalance + acceleration - aegis.liquidation.service) above
+         threshold - confirms a real, currently-accelerating cascade, not
+         just crowded positioning that hasn't broken yet.
+
+    Direction is a documented HYPOTHESIS, explicitly not yet validated
+    (spec section 54's own standard - weights/rules earn their place via
+    backtest/walk-forward, never assumed): trades WITH the liquidation
+    cascade (momentum, not mean-reversion) - extreme positive funding means
+    crowded longs; when the same-signed liquidation_imbalance shows longs
+    are the ones being flushed, the read is a long-squeeze cascade
+    continuing down, not yet exhausted, so SHORT. Mirrored for extreme
+    negative funding + short-side liquidation_imbalance -> LONG (short
+    squeeze ripping up). `evaluate_mean_reversion` above already owns the
+    contrarian "fade the extreme" read for this codebase - this strategy
+    is deliberately the other one, and only backtesting will show which
+    (if either) actually has an edge.
+    """
+    if snapshot.as_of is None:
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["INSUFFICIENT_DATA"])
+    if derivatives_snapshot is None or derivatives_snapshot.funding_zscore is None:
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["no funding rate data"])
+    if liquidation_snapshot is None or liquidation_snapshot.squeeze_score is None:
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["no liquidation data"])
+
+    funding_z = derivatives_snapshot.funding_zscore
+    oi_imbalance_z = derivatives_snapshot.global_long_short_ratio_zscore
+    liq_imbalance = liquidation_snapshot.liquidation_imbalance
+    squeeze_score = liquidation_snapshot.squeeze_score
+
+    if abs(funding_z) < funding_extreme_zscore:
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["funding rate not extreme"])
+    if squeeze_score < squeeze_score_threshold:
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["squeeze score below threshold"])
+    if oi_imbalance_z is None or liq_imbalance is None:
+        return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot, ["INSUFFICIENT_DATA"])
+
+    strength = min(100.0, max(0.0, squeeze_score))
+
+    # Crowded longs (funding + OI ratio both skewed long) actually flushing
+    # (positive liquidation_imbalance = longs are the ones being liquidated).
+    if funding_z > 0 and oi_imbalance_z > 0 and liq_imbalance > 0:
+        reasons = [
+            f"funding z-score {funding_z:.2f} >= {funding_extreme_zscore} (crowded longs)",
+            f"long/short ratio z-score {oi_imbalance_z:.2f} confirms long-side OI imbalance",
+            f"liquidation imbalance {liq_imbalance:.2f} - longs being flushed",
+            f"squeeze score {squeeze_score:.1f} >= {squeeze_score_threshold}",
+        ]
+        return StrategySignal(STRATEGY_LIQUIDATION_SQUEEZE, snapshot.symbol, snapshot.interval,
+                               snapshot.as_of, "SHORT", strength, reasons)
+
+    # Crowded shorts actually flushing (negative liquidation_imbalance =
+    # shorts are the ones being liquidated) -> short squeeze ripping up.
+    if funding_z < 0 and oi_imbalance_z < 0 and liq_imbalance < 0:
+        reasons = [
+            f"funding z-score {funding_z:.2f} <= -{funding_extreme_zscore} (crowded shorts)",
+            f"long/short ratio z-score {oi_imbalance_z:.2f} confirms short-side OI imbalance",
+            f"liquidation imbalance {liq_imbalance:.2f} - shorts being flushed",
+            f"squeeze score {squeeze_score:.1f} >= {squeeze_score_threshold}",
+        ]
+        return StrategySignal(STRATEGY_LIQUIDATION_SQUEEZE, snapshot.symbol, snapshot.interval,
+                               snapshot.as_of, "LONG", strength, reasons)
+
+    return _no_trade(STRATEGY_LIQUIDATION_SQUEEZE, snapshot,
+                      ["funding/OI-imbalance/liquidation-imbalance directions don't agree"])
+
+
 def evaluate_event_reaction(
     snapshot: TechnicalSnapshot, news_status: AssetNewsStatus | None, roc_confirmation_threshold: float = 0.0,
 ) -> StrategySignal:
@@ -216,11 +312,20 @@ STRATEGY_FUNCTIONS = {
 def evaluate_all(
     snapshot: TechnicalSnapshot, strategy_ids: tuple[str, ...] = ALL_STRATEGY_IDS,
     news_status: AssetNewsStatus | None = None,
+    derivatives_snapshot: DerivativesSnapshot | None = None,
+    liquidation_snapshot: LiquidationSnapshot | None = None,
 ) -> list[StrategySignal]:
+    """`derivatives_snapshot`/`liquidation_snapshot` are only consumed by
+    STRATEGY_LIQUIDATION_SQUEEZE - never required unless a caller
+    explicitly opts that strategy into `strategy_ids` (it is NOT part of
+    ALL_STRATEGY_IDS - see module docstring), so Paper/Shadow/Momentum's
+    existing calls (which pass neither) are unaffected."""
     signals = []
     for sid in strategy_ids:
         if sid == STRATEGY_EVENT_REACTION:
             signals.append(evaluate_event_reaction(snapshot, news_status))
+        elif sid == STRATEGY_LIQUIDATION_SQUEEZE:
+            signals.append(evaluate_liquidation_squeeze(snapshot, derivatives_snapshot, liquidation_snapshot))
         else:
             signals.append(STRATEGY_FUNCTIONS[sid](snapshot))
     return signals

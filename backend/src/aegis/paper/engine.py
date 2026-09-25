@@ -29,6 +29,7 @@ from aegis.execution.fills import apply_slippage, check_exit, close_position, co
 from aegis.execution.models import OpenPosition
 from aegis.paper.models import PaperTrade, PaperTradingConfig
 from aegis.providers.binance.models import SymbolRules
+from aegis.risk.correlation import compute_account_correlated_exposure_from_candles
 from aegis.risk.service import RiskEngine, TradeProposal
 from aegis.risk.sizing import round_down_to_step
 from aegis.strategy.confluence import combine_signals
@@ -44,6 +45,15 @@ class PaperTradingEngine:
         self.kill_switch_repo = kill_switch_repo
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
+
+    async def _update_exposure(self, account_id: str, interval: str) -> None:
+        """Recomputes open_positions_count AND correlated_exposure_pct
+        (PortfolioCorrelationEngine, Fase 17) every time a position opens or
+        closes - the two RiskEngine gates (`MAX_POSITIONS`,
+        `CORRELATED_EXPOSURE`) both depend on this staying current."""
+        open_symbols = await self.paper_repo.get_open_symbols(account_id)
+        correlation = await compute_account_correlated_exposure_from_candles(self.candle_repo, open_symbols, interval)
+        await self.risk_repo.set_exposure(account_id, len(open_symbols), correlation.correlated_exposure_pct)
 
     async def run_once(self, config: PaperTradingConfig, symbol_rules: SymbolRules) -> dict:
         account_id = config.account_id
@@ -87,7 +97,7 @@ class PaperTradingEngine:
         )
         await self.paper_repo.record_trade(trade)
         await self.paper_repo.close_position(account_id, config.symbol)
-        await self.risk_repo.set_exposure(account_id, len(await self.paper_repo.get_open_symbols(account_id)))
+        await self._update_exposure(account_id, config.interval)
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)
         kill_state = await self.kill_switch_repo.check_and_maybe_trigger(
             account_id, account.equity, account.peak_equity, account.consecutive_losses, self.risk_settings,
@@ -144,7 +154,7 @@ class PaperTradingEngine:
             confluence_score=confluence.confluence_score, reasons=reasons,
         )
         await self.paper_repo.open_position(account_id, config.symbol, position)
-        await self.risk_repo.set_exposure(account_id, len(await self.paper_repo.get_open_symbols(account_id)))
+        await self._update_exposure(account_id, config.interval)
         return {
             "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price,
             "quantity": position.quantity, "confluence_score": confluence.confluence_score,

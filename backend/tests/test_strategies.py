@@ -2,15 +2,19 @@ from datetime import UTC, datetime
 
 import pytest
 
+from aegis.derivatives.service import DerivativesSnapshot
+from aegis.liquidation.service import LiquidationSnapshot
 from aegis.news.conflict import AssetNewsStatus
 from aegis.strategy.strategies import (
     STRATEGY_BREAKOUT,
     STRATEGY_EVENT_REACTION,
+    STRATEGY_LIQUIDATION_SQUEEZE,
     STRATEGY_MEAN_REVERSION,
     STRATEGY_TREND_PULLBACK,
     evaluate_all,
     evaluate_breakout,
     evaluate_event_reaction,
+    evaluate_liquidation_squeeze,
     evaluate_mean_reversion,
     evaluate_trend_pullback,
 )
@@ -23,6 +27,18 @@ def _snapshot(**overrides) -> TechnicalSnapshot:
     base = dict(symbol="BTCUSDT", interval="1h", as_of=_AS_OF, data_points=300, quality="OK")
     base.update(overrides)
     return TechnicalSnapshot(**base)
+
+
+def _derivatives_snapshot(**overrides) -> DerivativesSnapshot:
+    base = dict(symbol="BTCUSDT", period="1h", as_of=_AS_OF, data_points=100, quality="OK")
+    base.update(overrides)
+    return DerivativesSnapshot(**base)
+
+
+def _liquidation_snapshot(**overrides) -> LiquidationSnapshot:
+    base = dict(symbol="BTCUSDT", period="5m", as_of=_AS_OF, data_points=20, quality="OK")
+    base.update(overrides)
+    return LiquidationSnapshot(**base)
 
 
 # -- trend pullback -----------------------------------------------------------
@@ -138,6 +154,102 @@ def test_mean_reversion_no_trade_when_rsi_extreme_but_vwap_distance_small():
 def test_mean_reversion_no_trade_in_the_middle_of_the_range():
     snapshot = _snapshot(close=100.1, rsi_14=50.0, adx_14=15.0, distance_from_vwap_pct=0.1)
     assert evaluate_mean_reversion(snapshot).signal == "NO_TRADE"
+
+
+# -- liquidation squeeze ---------------------------------------------------------
+# spec's "03 - Liquidation/Squeeze": funding extremo + desequilíbrio de OI +
+# aceleração de liquidações -> SqueezeScore, nunca só por funding. Deliberately
+# excluded from ALL_STRATEGY_IDS (see strategies.py docstring) - these tests
+# only prove the pure decision logic is correct against synthetic inputs, not
+# that it has ever fired against real data.
+
+def test_liquidation_squeeze_short_on_crowded_longs_actually_flushing():
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=2.5, global_long_short_ratio_zscore=1.8)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=75.0)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
+    assert signal.signal == "SHORT"
+    assert signal.strategy_id == STRATEGY_LIQUIDATION_SQUEEZE
+    assert signal.strength == pytest.approx(75.0)
+
+
+def test_liquidation_squeeze_long_on_crowded_shorts_actually_flushing():
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=-2.2, global_long_short_ratio_zscore=-1.5)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=-0.7, squeeze_score=80.0)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
+    assert signal.signal == "LONG"
+
+
+def test_liquidation_squeeze_never_fires_on_funding_alone():
+    # spec: "Nunca entra só por funding extremo" - extreme funding but a
+    # squeeze score below threshold (no real liquidation cascade) must NO_TRADE.
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=3.0, global_long_short_ratio_zscore=2.0)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=0.5, squeeze_score=10.0)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
+    assert signal.signal == "NO_TRADE"
+
+
+def test_liquidation_squeeze_no_trade_when_funding_not_extreme():
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=0.5, global_long_short_ratio_zscore=1.8)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=90.0)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
+    assert signal.signal == "NO_TRADE"
+
+
+def test_liquidation_squeeze_no_trade_when_directions_disagree():
+    # funding says crowded longs, but liquidation imbalance shows SHORTS
+    # being flushed instead - contradictory read, must not trade either way.
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=2.5, global_long_short_ratio_zscore=1.8)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=-0.6, squeeze_score=75.0)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
+    assert signal.signal == "NO_TRADE"
+
+
+def test_liquidation_squeeze_no_trade_without_derivatives_data():
+    snapshot = _snapshot()
+    liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=75.0)
+    signal = evaluate_liquidation_squeeze(snapshot, None, liquidation)
+    assert signal.signal == "NO_TRADE"
+
+
+def test_liquidation_squeeze_no_trade_without_liquidation_data():
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=2.5, global_long_short_ratio_zscore=1.8)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, None)
+    assert signal.signal == "NO_TRADE"
+
+
+def test_liquidation_squeeze_no_trade_when_squeeze_score_is_none():
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=2.5, global_long_short_ratio_zscore=1.8)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=None)
+    signal = evaluate_liquidation_squeeze(snapshot, derivatives, liquidation)
+    assert signal.signal == "NO_TRADE"
+
+
+def test_liquidation_squeeze_is_excluded_from_evaluate_all_by_default():
+    snapshot = _snapshot(close=110.0, ema_50=105.0, ema_200=100.0, adx_14=25.0, rsi_14=50.0,
+                          market_structure_trend="UPTREND", breakout=False, breakdown=False,
+                          volume_zscore_20=0.0, distance_from_vwap_pct=0.0)
+    signals = evaluate_all(snapshot)
+    assert STRATEGY_LIQUIDATION_SQUEEZE not in {s.strategy_id for s in signals}
+
+
+def test_liquidation_squeeze_can_be_explicitly_requested_from_evaluate_all():
+    snapshot = _snapshot()
+    derivatives = _derivatives_snapshot(funding_zscore=2.5, global_long_short_ratio_zscore=1.8)
+    liquidation = _liquidation_snapshot(liquidation_imbalance=0.6, squeeze_score=75.0)
+    signals = evaluate_all(
+        snapshot, strategy_ids=(STRATEGY_LIQUIDATION_SQUEEZE,),
+        derivatives_snapshot=derivatives, liquidation_snapshot=liquidation,
+    )
+    assert len(signals) == 1
+    assert signals[0].strategy_id == STRATEGY_LIQUIDATION_SQUEEZE
+    assert signals[0].signal == "SHORT"
 
 
 # -- evaluate_all ---------------------------------------------------------------

@@ -55,11 +55,13 @@ def _consolidation_then_breakout(n: int = 320, consolidation_len: int = 260, see
 
 
 class _FakeCandleRepo:
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, df_by_symbol: dict[str, pd.DataFrame] | None = None):
         self._df = df
+        self._df_by_symbol = df_by_symbol or {}
 
     async def fetch_ohlcv(self, symbol, interval, limit=500, closed_only=True):
-        return self._df.tail(limit).reset_index(drop=True)
+        df = self._df_by_symbol.get(symbol, self._df)
+        return df.tail(limit).reset_index(drop=True)
 
 
 class _FakePaperRepo:
@@ -262,6 +264,34 @@ async def test_position_closed_on_stop_hit_records_trade_and_updates_account():
     assert (config.account_id, config.symbol) not in paper_repo.positions
     assert len(paper_repo.trades) == 1
     assert risk_repo.outcomes == [pytest.approx(result["trade"].net_pnl)]
+
+
+@pytest.mark.asyncio
+async def test_position_closed_computes_correlated_exposure_across_remaining_open_symbols():
+    # Regression (Fase 17 - PortfolioCorrelationEngine): closing BTCUSDT
+    # while two other symbols stay open, all with PERFECTLY correlated
+    # candles (identical closes), must report correlated_exposure_pct as
+    # 1.0 for the two remaining positions - not the 0.0 default this always
+    # silently reported before.
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    candle_repo = _FakeCandleRepo(df, df_by_symbol={"BTCUSDT": df, "ETHUSDT": df, "SOLUSDT": df})
+    paper_repo = _FakePaperRepo()
+    risk_repo = _FakeRiskRepo(_account())
+    engine = PaperTradingEngine(candle_repo, paper_repo, risk_repo, _FakeKillSwitchRepo(), _Settings())
+    config = PaperTradingConfig(symbol="BTCUSDT", interval="1h")
+    last_bar = df.iloc[-1]
+    for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
+        paper_repo.positions[(config.account_id, symbol)] = OpenPosition(
+            side="SHORT", entry_time=df["open_time"].iloc[-5], entry_price=float(last_bar["close"]),
+            stop_price=float(last_bar["high"]) - 0.01, take_profit_price=float(last_bar["close"]) - 50.0,
+            quantity=0.01, risk_amount=1.0, confluence_score=40.0, reasons=["test"],
+        )
+
+    result = await engine.run_once(config, _rules())
+
+    assert result["action"] == "POSITION_CLOSED"
+    assert risk_repo.exposure_calls[-1] == (config.account_id, 2, pytest.approx(1.0))
 
 
 @pytest.mark.asyncio

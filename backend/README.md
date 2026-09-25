@@ -3108,6 +3108,69 @@ Dashboard) já rodando havia horas em produção real de testnet:
   reorganizado em grupos por estratégia (Paper/Shadow/Momentum) em vez de
   uma linha do tempo única misturada.
 
+## Métricas da Fase 17b (lacunas do blueprint original: estratégia, correlação, walk-forward, regime)
+
+- Pedido do usuário logo após a Fase 17 acima: "pode continuar implementando
+  o que faltou do blueprint". Dos itens listados na auditoria, quatro eram
+  concretamente construíveis em cima do que já existe; três (CapitalAllocationEngine,
+  AsymmetryEngine, FeatureEngine) continuam de fora - os dois primeiros exigem
+  uma decisão de negócio do usuário (como dividir capital em buckets; qual
+  metodologia de cenário), o terceiro não tem nenhum consumidor real até a
+  Fase 11 (ML) existir de verdade.
+- **Estratégia 03 · Liquidation/Squeeze** (`evaluate_liquidation_squeeze`,
+  `aegis/strategy/strategies.py`): implementada e testada (funding extremo +
+  desequilíbrio do long/short ratio + squeeze_score do LiquidationEngine, os
+  três concordando em direção - nunca só funding). Deliberadamente **não**
+  adicionada a `ALL_STRATEGY_IDS` - mesmo tratamento já dado a EVENT_REACTION:
+  achado ao vivo (2026-09-23) que a tabela `liquidations` nunca teve um evento
+  genuíno pra nenhum dos 7 símbolos no Binance testnet, então ativar isso nos
+  engines reais seria rodar lógica testada só com dado sintético contra um
+  feed que praticamente nunca dispara.
+- **PortfolioCorrelationEngine** (`aegis/risk/correlation.py`): a peça que
+  faltava atrás do `correlated_exposure_pct` (existia desde a Fase 7,
+  checado pelo RiskEngine, nunca calculado - achado na auditoria da Fase 17,
+  reportado ao usuário, construído agora que ele confirmou que queria tudo
+  implementado). Metodologia (uma hipótese documentada, não validada por
+  backtest ainda - mesmo padrão dos pesos de confluência): correlação de
+  Pearson dos retornos entre todo par de símbolos com posição aberta;
+  `correlated_exposure_pct` é a fração de posições abertas que compartilham
+  um par correlacionado (|correlação| >= 0.70) com pelo menos outra. Ligado
+  em paper/shadow/momentum nos mesmos pontos onde `open_positions_count` já
+  era recalculado.
+- **WalkForwardEngine** (`aegis/backtest/walk_forward.py`): a validação que o
+  blueprint exige antes de LIVE ("passou por... WALK-FORWARD aprovado"),
+  inexistente até agora. Reaproveita 100% da lógica do BacktestEngine
+  (`run_over_dataframe`, extraído de `run()` sem mudar nenhum comportamento -
+  6/6 testes antigos continuam passando) rodando o mesmo `BacktestConfig`
+  fixo contra janelas sequenciais de histórico, ao invés de reotimizar
+  parâmetros por janela (não existe nenhuma infraestrutura de otimização
+  neste projeto ainda - "walk-forward sem reotimização", uma técnica real e
+  nomeada, não uma versão capenga da que reotimiza). Persistido em
+  `walk_forward_runs` (migration 0019) e exposto no dashboard (Risk & Logs >
+  Walk-Forward). Rodado ao vivo contra BTCUSDT/ETHUSDT reais: 3 folds cada
+  com a janela calibrada pro volume de histórico atual (~579 candles de 1h),
+  achado real e honesto - 0% dos folds lucrativos pros pesos default atuais,
+  exatamente o tipo de sinal que só walk-forward revela (um backtest de
+  janela única nunca mostraria isso).
+- **RegimeEngine** (`aegis/regime/service.py`): classificação de regime
+  (tendência via ADX+alinhamento de EMA, volatilidade via
+  `volatility_percentile_100`) a partir de indicadores que o
+  TechnicalAnalysisService já calcula - nenhuma tabela nova, nenhum polling
+  novo. Deliberadamente **não** ligado a nenhuma lógica de gating de
+  estratégia (mudaria o comportamento dos engines já rodando sem validação
+  própria) - só uma feature exposta em `/api/market/regime` e no dashboard,
+  mesmo tratamento que Derivatives/Liquidation já recebem. Bug real pego ao
+  vivo durante essa implementação: `volatility_percentile_100` é uma FRAÇÃO
+  0-1 apesar do nome (o "100" é o tamanho da janela de lookback, não a
+  escala) - os thresholds iniciais (80.0/20.0, escala 0-100) classificavam
+  100% dos símbolos reais como LOW_VOLATILITY sempre; corrigido pra 0.80/0.20
+  antes de qualquer commit.
+- 705/705 testes passando no total (51 novos nesta rodada). Verificado ao
+  vivo depois de cada peça: `/api/walk-forward` e `/api/market/regime`
+  respondendo com dado real, dashboard renderizando as duas telas novas sem
+  erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
+  reinícios.
+
 ## Métricas da Fase 17 (auditoria completa + troca de conta demo/real da BingX pelo dashboard)
 
 - Auditoria pedida pelo usuário ("verifique problemas e corrija tudo")

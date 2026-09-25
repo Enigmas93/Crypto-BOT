@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from aegis.execution.binance_provider import BracketOpenError
 from aegis.execution.fills import apply_slippage, close_position, compute_stop, compute_take_profit
 from aegis.execution.models import OpenPosition
+from aegis.risk.correlation import compute_account_correlated_exposure_from_candles
 from aegis.risk.service import RiskEngine, TradeProposal
 from aegis.risk.sizing import round_down_to_step
 from aegis.shadow.models import ShadowPosition, ShadowTrade, ShadowTradingConfig
@@ -41,6 +42,15 @@ class ShadowTradingEngine:
         self.execution = execution
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
+
+    async def _update_exposure(self, account_id: str, interval: str) -> None:
+        """Recomputes open_positions_count AND correlated_exposure_pct
+        (PortfolioCorrelationEngine, Fase 17) every time a position opens or
+        closes - the two RiskEngine gates (`MAX_POSITIONS`,
+        `CORRELATED_EXPOSURE`) both depend on this staying current."""
+        open_symbols = await self.shadow_repo.get_open_symbols(account_id)
+        correlation = await compute_account_correlated_exposure_from_candles(self.candle_repo, open_symbols, interval)
+        await self.risk_repo.set_exposure(account_id, len(open_symbols), correlation.correlated_exposure_pct)
 
     async def run_once(self, config: ShadowTradingConfig, symbol_rules) -> dict:
         account_id = config.account_id
@@ -73,7 +83,7 @@ class ShadowTradingEngine:
             # inconsistency, close the local record so it stops blocking
             # new entries, and surface it loudly for manual review.
             await self.shadow_repo.close_position(account_id, config.symbol)
-            await self.risk_repo.set_exposure(account_id, len(await self.shadow_repo.get_open_symbols(account_id)))
+            await self._update_exposure(account_id, config.interval)
             return {
                 "action": "RECONCILIATION_FAILED", "stop_status": stop_status.status, "tp_status": tp_status.status,
                 "message": "position is flat on the exchange but neither bracket leg shows FILLED - manual review needed",
@@ -103,7 +113,7 @@ class ShadowTradingEngine:
         )
         await self.shadow_repo.record_trade(trade)
         await self.shadow_repo.close_position(account_id, config.symbol)
-        await self.risk_repo.set_exposure(account_id, len(await self.shadow_repo.get_open_symbols(account_id)))
+        await self._update_exposure(account_id, config.interval)
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)
         kill_state = await self.kill_switch_repo.check_and_maybe_trigger(
             account_id, account.equity, account.peak_equity, account.consecutive_losses, self.risk_settings,
@@ -192,7 +202,7 @@ class ShadowTradingEngine:
             confluence_score=confluence.confluence_score, reasons=reasons,
         )
         await self.shadow_repo.open_position(account_id, config.symbol, position)
-        await self.risk_repo.set_exposure(account_id, len(await self.shadow_repo.get_open_symbols(account_id)))
+        await self._update_exposure(account_id, config.interval)
         return {
             "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price,
             "quantity": position.quantity, "confluence_score": confluence.confluence_score,

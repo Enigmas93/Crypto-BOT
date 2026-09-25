@@ -278,6 +278,19 @@ async def test_backtest_trades_returns_run_and_trades_for_a_real_run(client):
 
 
 @pytest.mark.asyncio
+async def test_walk_forward_runs_returns_a_list(client):
+    resp = await client.get("/api/walk-forward", params={"limit": 5})
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["runs"], list)
+
+
+@pytest.mark.asyncio
+async def test_walk_forward_run_404s_for_an_unknown_run(client):
+    resp = await client.get("/api/walk-forward/999999999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_market_macro_returns_a_list(client):
     resp = await client.get("/api/market/macro")
     assert resp.status_code == 200
@@ -303,6 +316,18 @@ async def test_market_liquidations_covers_every_configured_symbol(client):
     for s in body["symbols"]:
         assert s["long_notional"] >= 0
         assert s["short_notional"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_market_regime_covers_every_configured_symbol(client):
+    settings = get_settings()
+    resp = await client.get("/api/market/regime")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {s["symbol"] for s in body["symbols"]} == set(settings.symbols)
+    for s in body["symbols"]:
+        assert s["trend_regime"] in ("TRENDING_UP", "TRENDING_DOWN", "RANGING", "UNKNOWN")
+        assert s["volatility_regime"] in ("HIGH_VOLATILITY", "NORMAL_VOLATILITY", "LOW_VOLATILITY", None)
 
 
 @pytest.mark.asyncio

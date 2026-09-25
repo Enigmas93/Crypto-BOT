@@ -36,6 +36,7 @@ from aegis.execution.fills import apply_slippage, close_position, compute_stop
 from aegis.execution.models import OpenPosition
 from aegis.momentum.candles import klines_to_closed_dataframe
 from aegis.momentum.models import MomentumConfig, MomentumPosition, MomentumTrade
+from aegis.risk.correlation import compute_account_correlated_exposure_from_rest
 from aegis.risk.service import RiskEngine, TradeProposal
 from aegis.risk.sizing import round_down_to_step
 from aegis.scanner.ranking import rank_by_momentum
@@ -53,6 +54,17 @@ class MomentumTradingEngine:
         self.execution = execution
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
+
+    async def _update_exposure(self, account_id: str, interval: str) -> None:
+        """Recomputes open_positions_count AND correlated_exposure_pct
+        (PortfolioCorrelationEngine, Fase 17) every time a position opens or
+        closes. Momentum's universe is dynamic and not guaranteed to be in
+        the collector's persisted candles table, so correlation is computed
+        straight from this engine's own REST client (Binance or BingX -
+        both implement get_klines the same way), not CandleRepository."""
+        open_symbols = await self.momentum_repo.get_open_symbols(account_id)
+        correlation = await compute_account_correlated_exposure_from_rest(self.rest, open_symbols, interval)
+        await self.risk_repo.set_exposure(account_id, len(open_symbols), correlation.correlated_exposure_pct)
 
     async def scan(self, config: MomentumConfig, exclude: set[str]):
         tickers = await self.rest.get_24h_tickers()
@@ -85,7 +97,7 @@ class MomentumTradingEngine:
         else:
             # Never fabricate a price - same principle as ShadowTradingEngine.
             await self.momentum_repo.close_position(account_id, symbol)
-            await self.risk_repo.set_exposure(account_id, len(await self.momentum_repo.get_open_symbols(account_id)))
+            await self._update_exposure(account_id, config.interval)
             return {
                 "action": "RECONCILIATION_FAILED", "stop_status": stop_status.status,
                 "trailing_status": trailing_status.status,
@@ -114,7 +126,7 @@ class MomentumTradingEngine:
         )
         await self.momentum_repo.record_trade(trade)
         await self.momentum_repo.close_position(account_id, symbol)
-        await self.risk_repo.set_exposure(account_id, len(await self.momentum_repo.get_open_symbols(account_id)))
+        await self._update_exposure(account_id, config.interval)
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)
         kill_state = await self.kill_switch_repo.check_and_maybe_trigger(
             account_id, account.equity, account.peak_equity, account.consecutive_losses, self.risk_settings,
@@ -198,7 +210,7 @@ class MomentumTradingEngine:
             confluence_score=confluence.confluence_score, momentum_score=momentum_score, reasons=reasons,
         )
         await self.momentum_repo.open_position(account_id, symbol, position)
-        await self.risk_repo.set_exposure(account_id, len(await self.momentum_repo.get_open_symbols(account_id)))
+        await self._update_exposure(account_id, config.interval)
         return {
             "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price,
             "quantity": position.quantity, "confluence_score": confluence.confluence_score,

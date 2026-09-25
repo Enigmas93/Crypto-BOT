@@ -55,11 +55,13 @@ def _consolidation_then_breakout(n: int = 320, consolidation_len: int = 260, see
 
 
 class _FakeCandleRepo:
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, df_by_symbol: dict[str, pd.DataFrame] | None = None):
         self._df = df
+        self._df_by_symbol = df_by_symbol or {}
 
     async def fetch_ohlcv(self, symbol, interval, limit=500, closed_only=True):
-        return self._df.tail(limit).reset_index(drop=True)
+        df = self._df_by_symbol.get(symbol, self._df)
+        return df.tail(limit).reset_index(drop=True)
 
 
 class _FakeShadowRepo:
@@ -321,6 +323,40 @@ async def test_position_closed_via_stop_records_trade_and_cancels_leftover():
     # RiskEngine's max_open_positions gate actually reads) must be kept in
     # sync with the real open-position count, not left stale.
     assert risk_repo.exposure_calls[-1] == (config.account_id, 0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_position_closed_computes_correlated_exposure_across_remaining_open_symbols():
+    # Regression (Fase 17 - PortfolioCorrelationEngine): closing BTCUSDT
+    # while TWO other symbols (ETHUSDT/SOLUSDT) stay open, all with
+    # PERFECTLY correlated candles (identical closes), must report
+    # correlated_exposure_pct as 1.0 for the two REMAINING open positions -
+    # not the 0.0 default this always silently reported before. (A single
+    # remaining position, not two, would trivially be 0.0 regardless -
+    # this test needs two survivors to actually exercise the computation.)
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    candle_repo = _FakeCandleRepo(df, df_by_symbol={"BTCUSDT": df, "ETHUSDT": df, "SOLUSDT": df})
+    shadow_repo = _FakeShadowRepo()
+    risk_repo = _FakeRiskRepo(_account())
+    engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, _FakeKillSwitchRepo(),
+                                  _FakeExecutionProvider(), _Settings())
+    config = ShadowTradingConfig(symbol="BTCUSDT", interval="1h")
+    for symbol, stop_id, tp_id in (("BTCUSDT", 101, 102), ("ETHUSDT", 201, 202), ("SOLUSDT", 301, 302)):
+        shadow_repo.positions[(config.account_id, symbol)] = ShadowPosition(
+            side="LONG", entry_time=df["open_time"].iloc[-5], entry_price=100.0, quantity=0.01,
+            stop_order_id=stop_id, take_profit_order_id=tp_id, stop_price=96.0, take_profit_price=108.0,
+            risk_amount=1.0, confluence_score=40.0, reasons=["test"],
+        )
+    execution = engine.execution
+    execution.position_amt = 0.0
+    execution.set_order_status(101, "FILLED", avg_price=96.0)
+    execution.set_order_status(102, "NEW")
+
+    result = await engine.run_once(config, _rules())
+
+    assert result["action"] == "POSITION_CLOSED"
+    assert risk_repo.exposure_calls[-1] == (config.account_id, 2, pytest.approx(1.0))
 
 
 @pytest.mark.asyncio

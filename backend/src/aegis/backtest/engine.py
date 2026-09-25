@@ -93,17 +93,38 @@ class BacktestEngine:
                 f"{len(df)} candles, need at least {config.warmup_bars + 10}"
             )
 
-        news_history: list[tuple] = []
-        if STRATEGY_EVENT_REACTION in config.strategy_ids:
-            # Symbol -> asset: strips the USDT quote suffix (BTCUSDT ->
-            # BTC) - correct for every asset the News Engine actually
-            # tracks (aegis.news.classifier.DEFAULT_ASSET_ALIASES); a
-            # symbol whose base isn't tracked there (e.g. 1000PEPEUSDT)
-            # simply never has history, so this always returns no status
-            # for it rather than guessing - not a bug, just no coverage yet.
-            asset = config.symbol.removesuffix("USDT")
-            news_history = await self.news_repo.fetch_status_history(
-                asset, df["open_time"].iloc[0], df["close_time"].iloc[-1],
+        news_history = await self.fetch_news_history(config, df)
+        return self.run_over_dataframe(df, config, symbol_rules, news_history=news_history)
+
+    async def fetch_news_history(self, config: BacktestConfig, df) -> list[tuple]:
+        if STRATEGY_EVENT_REACTION not in config.strategy_ids:
+            return []
+        # Symbol -> asset: strips the USDT quote suffix (BTCUSDT -> BTC) -
+        # correct for every asset the News Engine actually tracks
+        # (aegis.news.classifier.DEFAULT_ASSET_ALIASES); a symbol whose
+        # base isn't tracked there (e.g. 1000PEPEUSDT) simply never has
+        # history, so this always returns no status for it rather than
+        # guessing - not a bug, just no coverage yet.
+        asset = config.symbol.removesuffix("USDT")
+        return await self.news_repo.fetch_status_history(asset, df["open_time"].iloc[0], df["close_time"].iloc[-1])
+
+    def run_over_dataframe(
+        self, df, config: BacktestConfig, symbol_rules: SymbolRules, news_history: list[tuple] | None = None,
+    ) -> BacktestResult:
+        """The actual bar-by-bar replay loop, extracted from `run()` (Fase
+        17) so `WalkForwardEngine` can call it directly on an explicit
+        historical SLICE instead of "whatever candle_repo.fetch_ohlcv's most
+        recent N bars happen to be" - `run()` itself is now a thin wrapper:
+        fetch the most recent window, fetch its news history, delegate here.
+        Synchronous on purpose: everything it touches (the DataFrame,
+        RiskEngine, strategy evaluation) is already in memory - no I/O
+        happens inside the replay loop itself, only in the two fetches
+        `run()` does before calling this."""
+        news_history = news_history or []
+        if len(df) < config.warmup_bars + 10:
+            raise ValueError(
+                f"not enough history for {config.symbol}/{config.interval}: "
+                f"{len(df)} candles, need at least {config.warmup_bars + 10}"
             )
 
         account = AccountState(
