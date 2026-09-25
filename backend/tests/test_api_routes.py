@@ -319,6 +319,71 @@ async def test_market_liquidations_covers_every_configured_symbol(client):
 
 
 @pytest.mark.asyncio
+async def test_get_strategy_settings_covers_every_known_strategy(client):
+    resp = await client.get("/api/settings/strategies")
+    assert resp.status_code == 200
+    body = resp.json()
+    ids = {s["strategy_id"] for s in body["strategies"]}
+    assert ids == {"TREND_PULLBACK", "BREAKOUT", "MEAN_REVERSION", "LIQUIDATION_SQUEEZE"}
+    for s in body["strategies"]:
+        assert isinstance(s["enabled"], bool)
+
+
+@pytest.mark.asyncio
+async def test_set_strategy_enabled_rejects_an_unknown_strategy(client):
+    resp = await client.post("/api/settings/strategies/NOT_A_REAL_STRATEGY", json={"enabled": False})
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_set_strategy_enabled_round_trips(client):
+    # Toggle a real strategy off then back on - always restoring the
+    # original state, since this table is shared with the running system.
+    before = await client.get("/api/settings/strategies")
+    original = next(s["enabled"] for s in before.json()["strategies"] if s["strategy_id"] == "BREAKOUT")
+    try:
+        resp = await client.post("/api/settings/strategies/BREAKOUT", json={"enabled": not original})
+        assert resp.status_code == 200
+        assert resp.json() == {"strategy_id": "BREAKOUT", "enabled": not original}
+
+        after = await client.get("/api/settings/strategies")
+        assert next(s["enabled"] for s in after.json()["strategies"] if s["strategy_id"] == "BREAKOUT") == (not original)
+    finally:
+        await client.post("/api/settings/strategies/BREAKOUT", json={"enabled": original})
+
+
+@pytest.mark.asyncio
+async def test_get_capital_allocation_returns_the_seeded_split(client):
+    resp = await client.get("/api/settings/capital-allocation")
+    assert resp.status_code == 200
+    allocations = resp.json()["allocations"]
+    assert "shadow_bingx" in allocations
+    assert "momentum_bingx" in allocations
+
+
+@pytest.mark.asyncio
+async def test_set_capital_allocation_rejects_a_split_not_summing_to_one(client):
+    resp = await client.post("/api/settings/capital-allocation", json={"shadow_bingx_pct": 0.5, "momentum_bingx_pct": 0.6})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_capital_allocation_round_trips(client):
+    before = (await client.get("/api/settings/capital-allocation")).json()["allocations"]
+    try:
+        resp = await client.post(
+            "/api/settings/capital-allocation", json={"shadow_bingx_pct": 0.75, "momentum_bingx_pct": 0.25},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["allocations"]["shadow_bingx"] == pytest.approx(0.75)
+    finally:
+        await client.post(
+            "/api/settings/capital-allocation",
+            json={"shadow_bingx_pct": before["shadow_bingx"], "momentum_bingx_pct": before["momentum_bingx"]},
+        )
+
+
+@pytest.mark.asyncio
 async def test_market_regime_covers_every_configured_symbol(client):
     settings = get_settings()
     resp = await client.get("/api/market/regime")

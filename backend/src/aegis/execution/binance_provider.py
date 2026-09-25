@@ -31,8 +31,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aegis.execution.models import BracketOpenError  # noqa: F401 - re-exported, see below
 from aegis.providers.binance.models import AlgoOrderResult, OrderResult, PositionRisk
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceOrderError
+
+# BracketOpenError moved to aegis.execution.models (Fase 17d) so it's the
+# SAME class BingXExecutionProvider raises - re-exported here so existing
+# code/tests importing `from aegis.execution.binance_provider import
+# BracketOpenError` keep working unchanged.
 
 
 @dataclass(slots=True)
@@ -50,16 +56,6 @@ class TrailingBracketOrders:
     entry: OrderResult
     stop: AlgoOrderResult
     trailing_stop: AlgoOrderResult
-
-
-class BracketOpenError(RuntimeError):
-    """Raised when a bracket could not be fully established. `flattened`
-    says whether the emergency close succeeded (True) or also failed
-    (False - manual intervention is required immediately)."""
-
-    def __init__(self, message: str, flattened: bool) -> None:
-        super().__init__(message)
-        self.flattened = flattened
 
 
 class BinanceExecutionProvider:

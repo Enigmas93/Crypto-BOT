@@ -38,10 +38,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aegis.config import get_settings  # noqa: E402
 from aegis.db.candle_repository import CandleRepository  # noqa: E402
+from aegis.db.derivatives_repository import DerivativesRepository  # noqa: E402
 from aegis.db.engine import close_pool, create_pool  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
+from aegis.db.liquidation_repository import LiquidationRepository  # noqa: E402
 from aegis.db.paper_repository import PaperRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
+from aegis.db.strategy_settings_repository import StrategySettingsRepository  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.paper.engine import PaperTradingEngine  # noqa: E402
@@ -62,9 +65,17 @@ async def _main() -> None:
     candle_repo = CandleRepository(pool)
     paper_repo = PaperRepository(pool)
     risk_repo = RiskRepository(pool)
+    # STRATEGY_LIQUIDATION_SQUEEZE (Fase 17e, now in ALL_STRATEGY_IDS) needs
+    # these - Paper trades the fixed settings.symbols universe, where
+    # DerivativesEngine/LiquidationEngine actually collect data.
+    derivatives_repo = DerivativesRepository(pool)
+    liquidation_repo = LiquidationRepository(pool)
+    strategy_settings_repo = StrategySettingsRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
-    engine = PaperTradingEngine(candle_repo, paper_repo, risk_repo, kill_switch_repo, settings)
+    engine = PaperTradingEngine(candle_repo, paper_repo, risk_repo, kill_switch_repo, settings,
+                                 derivatives_repo=derivatives_repo, liquidation_repo=liquidation_repo,
+                                 strategy_settings_repo=strategy_settings_repo)
 
     try:
         rules_by_symbol = await rest.get_symbol_rules()

@@ -39,6 +39,7 @@
     <button class="tab-btn" data-tab="strategies">STRATEGIES</button>
     <button class="tab-btn" data-tab="positions">POSITIONS</button>
     <button class="tab-btn" data-tab="orders">ORDERS</button>
+    <button class="tab-btn" data-tab="news">NOTÍCIAS</button>
     <button class="tab-btn" data-tab="risk">RISK &amp; LOGS</button>
   </div>
 
@@ -118,6 +119,21 @@
             <span class="chip live" id="bingx-mode-live-btn" onclick="switchBingxMode('live')">REAL (dinheiro de verdade)</span>
             <span class="settings-status" id="bingx-mode-status"></span>
           </div>
+
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border-soft)">
+            <p class="settings-note">
+              A conta BingX (demo ou real) é <b>uma única carteira</b> compartilhada por Shadow BingX e
+              Momentum BingX. Essa repartição decide quanto do saldo real cada um pode usar pra dimensionar
+              posições — sem isso, os dois calculariam o tamanho da posição como se tivessem 100% do saldo
+              sozinhos.
+            </p>
+            <div class="risk-row"><span class="rl">Shadow BingX</span><span class="rv" id="allocation-shadow-display">—</span></div>
+            <div class="risk-row" style="margin-bottom:10px"><span class="rl">Momentum BingX</span><span class="rv" id="allocation-momentum-display">—</span></div>
+            <input type="text" id="allocation-shadow-input" placeholder="% Shadow BingX (ex: 60)" autocomplete="off">
+            <input type="text" id="allocation-momentum-input" placeholder="% Momentum BingX (ex: 40)" autocomplete="off">
+            <button class="icon-btn" style="width:auto;padding:7px 16px" onclick="saveCapitalAllocation()">Salvar repartição</button>
+            <span class="settings-status" id="allocation-save-status"></span>
+          </div>
         </div>
       </div>
 
@@ -147,6 +163,16 @@
     <div class="view" id="view-strategies">
       <div class="section-title">Todas as estratégias</div>
       <div class="grid full" id="strategies-all" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))"></div>
+
+      <div class="section-title">Configurações — Motores de Sinal</div>
+      <div class="grid full"><div class="card">
+        <p class="settings-note">
+          Ativa/desativa um motor de confluência em todas as contas de uma vez (Paper, Shadow, Momentum —
+          Binance e BingX). LIQUIDATION_SQUEEZE só produz sinal real em contas Binance (Paper/Shadow) hoje —
+          a BingX ainda não coleta dado de derivativos/liquidação, então fica presente na votação mas inerte lá.
+        </p>
+        <div id="strategy-toggles" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+      </div></div>
     </div>
 
     <!-- ============ POSITIONS ============ -->
@@ -176,6 +202,22 @@
         <div class="table-scroll"><table><thead><tr><th>Estratégia</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>Fechado em</th></tr></thead>
           <tbody id="orders-table"></tbody></table></div>
       </div>
+    </div>
+
+    <!-- ============ NOTÍCIAS ============ -->
+    <div class="view" id="view-news">
+      <div class="section-title">Status por ativo</div>
+      <div class="grid full"><div class="card">
+        <div class="table-scroll"><table><thead><tr><th>Ativo</th><th>Status</th><th>Fontes distintas</th><th>Sentimento dominante</th></tr></thead>
+          <tbody id="news-status-table-full"></tbody></table></div>
+      </div></div>
+
+      <div class="section-title">Feed completo — todas as fontes confiáveis coletadas</div>
+      <div class="grid full"><div class="card">
+        <div class="subtitle">Fontes: mídia especializada em cripto (Decrypt e outras já configuradas) — cada notícia já vem classificada por sentimento, magnitude e qualidade da fonte antes de alimentar o EVENT_REACTION.</div>
+        <div class="table-scroll"><table><thead><tr><th>Publicado em</th><th>Fonte</th><th>Título</th><th>Sentimento</th><th>Magnitude</th><th>Qualidade</th></tr></thead>
+          <tbody id="news-feed-full"></tbody></table></div>
+      </div></div>
     </div>
 
     <!-- ============ RISK & LOGS ============ -->

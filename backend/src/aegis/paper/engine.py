@@ -33,18 +33,47 @@ from aegis.risk.correlation import compute_account_correlated_exposure_from_cand
 from aegis.risk.service import RiskEngine, TradeProposal
 from aegis.risk.sizing import round_down_to_step
 from aegis.strategy.confluence import combine_signals
+from aegis.strategy.market_context import fetch_derivatives_snapshot, fetch_liquidation_snapshot
 from aegis.strategy.strategies import evaluate_all
 from aegis.technical.service import compute_snapshot
 
 
 class PaperTradingEngine:
-    def __init__(self, candle_repo, paper_repo, risk_repo, kill_switch_repo, risk_settings) -> None:
+    def __init__(
+        self, candle_repo, paper_repo, risk_repo, kill_switch_repo, risk_settings,
+        derivatives_repo=None, liquidation_repo=None, strategy_settings_repo=None,
+    ) -> None:
         self.candle_repo = candle_repo
         self.paper_repo = paper_repo
         self.risk_repo = risk_repo
         self.kill_switch_repo = kill_switch_repo
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
+        # Optional (Fase 17e) - see ShadowTradingEngine's identical fields
+        # for why (STRATEGY_LIQUIDATION_SQUEEZE, Binance's fixed universe only).
+        self.derivatives_repo = derivatives_repo
+        self.liquidation_repo = liquidation_repo
+        # Optional (Fase 17f) - per-strategy enable/disable toggle. None
+        # means "no filtering", matching every existing caller.
+        self.strategy_settings_repo = strategy_settings_repo
+
+    async def _effective_strategy_ids(self, strategy_ids: tuple[str, ...]) -> tuple[str, ...]:
+        if self.strategy_settings_repo is None:
+            return strategy_ids
+        return await self.strategy_settings_repo.filter_enabled(strategy_ids)
+
+    async def _fetch_market_context(self, symbol: str, interval: str) -> tuple:
+        if self.derivatives_repo is None or self.liquidation_repo is None:
+            return None, None
+        derivatives_snapshot = await fetch_derivatives_snapshot(
+            self.derivatives_repo, self.candle_repo, symbol, interval,
+            self.risk_settings.funding_zscore_lookback, self.risk_settings.derivatives_hist_limit,
+        )
+        liquidation_snapshot = await fetch_liquidation_snapshot(
+            self.liquidation_repo, symbol,
+            self.risk_settings.liquidation_window_seconds, self.risk_settings.liquidation_baseline_buckets,
+        )
+        return derivatives_snapshot, liquidation_snapshot
 
     async def _update_exposure(self, account_id: str, interval: str) -> None:
         """Recomputes open_positions_count AND correlated_exposure_pct
@@ -117,7 +146,12 @@ class PaperTradingEngine:
             return {"action": "KILL_SWITCH_BLOCKED", "reasons": kill_state.reasons}
 
         snapshot = compute_snapshot(config.symbol, config.interval, df)
-        signals = evaluate_all(snapshot, config.strategy_ids)
+        derivatives_snapshot, liquidation_snapshot = await self._fetch_market_context(config.symbol, config.interval)
+        strategy_ids = await self._effective_strategy_ids(config.strategy_ids)
+        signals = evaluate_all(
+            snapshot, strategy_ids,
+            derivatives_snapshot=derivatives_snapshot, liquidation_snapshot=liquidation_snapshot,
+        )
         confluence = combine_signals(signals, config.strategy_weights, config.confluence_threshold)
         await self.paper_repo.set_cursor(account_id, config.symbol, config.interval, bar["close_time"])
 

@@ -3108,6 +3108,70 @@ Dashboard) já rodando havia horas em produção real de testnet:
   reorganizado em grupos por estratégia (Paper/Shadow/Momentum) em vez de
   uma linha do tempo única misturada.
 
+## Métricas da Fase 17d/e/f/g (crash real em produção, ativação do Squeeze, toggle de estratégia, repartição de capital)
+
+- Gatilho: o usuário reportou receber, desde o dia anterior, alertas do Telegram
+  "'run_bingx_shadow_trading.py' caiu (exit code 1)... Reiniciando automaticamente".
+- **Bug real encontrado e corrigido (Fase 17d)**: `BinanceExecutionProvider` e
+  `BingXExecutionProvider` definiam CADA UM sua própria classe
+  `BracketOpenError` - duas classes distintas com o mesmo nome e formato
+  idêntico (um comentário já dizia "Same shape as..."). `ShadowTradingEngine`/
+  `MomentumTradingEngine` só importavam a cópia do Binance, então
+  `except BracketOpenError` nunca capturava a exceção que o provider da BingX
+  de fato lançava - confirmado no log real: a BingX rejeitou um stop loss
+  (código 110411), a posição foi corretamente flattened, mas a exceção não
+  capturada derrubou o processo inteiro. Corrigido movendo a classe pra
+  `aegis/execution/models.py` (fonte única) e fazendo os dois providers
+  reexportarem a mesma classe - agora estruturalmente impossível dessincronizar
+  de novo. Teste de regressão dedicado provando a identidade das classes.
+- **Segundo bug real encontrado na mesma investigação**: o scanner do Momentum
+  (`rank_by_momentum`) estava ranqueando `NCCOGOLD2USD-USDT` - um contrato
+  sintético de ouro que a BingX lista ao lado dos pares de cripto de verdade
+  (junto com prata, petróleo, trigo, pares XAU/EUR etc., todos com prefixo
+  `NCCO` no nome do ativo). Esse contrato passava nos filtros de volume e
+  sufixo "USDT" normalmente, mas a BingX rejeita ordem nele numa conta de
+  API em modo one-way (código 101414) - era a causa raiz de 3 das 4 quedas
+  históricas do Momentum. Corrigido filtrando qualquer símbolo com prefixo
+  `NCCO` estruturalmente no scanner, não só o caso específico do ouro -
+  verificado ao vivo: o scan agora só retorna pares de cripto reais
+  (BTCUSDT, SOLUSDT etc.).
+- **LIQUIDATION_SQUEEZE ativada (Fase 17e)**, a pedido explícito do usuário,
+  entendendo o trade-off já documentado: adicionada a `ALL_STRATEGY_IDS` e
+  ligada com dado REAL de derivativos/liquidação em Paper e Shadow (Binance) -
+  únicas contas cujo universo fixo de símbolos tem esse dado coletado.
+  Continua estruturalmente inerte (sempre NO_TRADE) em toda conta BingX e no
+  Momentum (universo dinâmico) - nem a BingX nem o Momentum têm esse dado
+  coletado em lugar nenhum do código ainda; é uma limitação real e
+  transparente, não um bug escondido.
+- **Toggle de estratégia por painel (Fase 17f)**: nova tabela
+  `strategy_settings` + endpoint `/api/settings/strategies` + aba
+  Strategies do dashboard - liga/desliga cada uma das 4 estratégias em
+  todas as contas de uma vez. Deixado tudo ativado por padrão, como pedido.
+- **Repartição de capital entre Shadow BingX e Momentum BingX (Fase 17g)**:
+  gap real encontrado ao implementar - os dois engines compartilham UMA
+  única carteira real da BingX (mesma chave), mas cada um sincronizava
+  100% do saldo real via `get_equity()` (Fase 17b), então os dois
+  dimensionavam posições como se sozinhos tivessem a conta inteira,
+  contando o mesmo capital em dobro. Corrigido com `capital_allocations`
+  (split 60/40 padrão - Shadow roda as 3 estratégias mais validadas,
+  Momentum é documentadamente mais arriscado por design) - `sync_equity`
+  agora escala pela fatia configurada antes de gravar o equity real.
+  Ajustável pelo painel (aba BingX → Configurações).
+- **Nova aba Notícias**: feed completo (até 150 itens) de todas as fontes já
+  coletadas, mais o status de conflito por ativo (o que já alimenta o
+  EVENT_REACTION) - antes só existia uma versão resumida (15 itens) dentro
+  de Risk & Logs.
+- Dashboard: a aba BingX agora mostra só a conta ATIVA (demo OU real, nunca
+  as duas ao mesmo tempo) em "Resultado por Estratégia"/atividade/log/
+  histórico - reduz o ruído visual, a pedido do usuário, especialmente
+  depois de ativar a 4ª estratégia.
+- 737/737 testes passando (19 novos). Verificado ao vivo depois de reiniciar
+  os 14 processos do zero (a máquina foi desligada e religada no meio desta
+  rodada): zero crashes, `/api/settings/strategies` e
+  `/api/settings/capital-allocation` respondendo com os valores reais
+  semeados, scan do Momentum limpo, e Paper/Shadow ciclando normalmente com
+  LIQUIDATION_SQUEEZE já fazendo parte da avaliação de cada símbolo.
+
 ## Métricas da Fase 17c (correção crítica: sizing de posição usava equity fictício, não o saldo real)
 
 - Contexto: o usuário avisou que pretende depositar **$100 reais** na conta

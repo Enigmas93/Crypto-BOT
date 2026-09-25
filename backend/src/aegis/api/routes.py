@@ -29,8 +29,10 @@ from aegis.api.dependencies import (
     get_news_repo,
     get_paper_repo,
     get_risk_repo,
+    get_capital_allocation_repo,
     get_settings_dep,
     get_shadow_repo,
+    get_strategy_settings_repo,
     get_walk_forward_repo,
 )
 from aegis.config import Settings
@@ -46,12 +48,15 @@ from aegis.db.momentum_repository import MomentumRepository
 from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
+from aegis.db.capital_allocation_repository import CapitalAllocationRepository
 from aegis.db.shadow_repository import ShadowRepository
+from aegis.db.strategy_settings_repository import StrategySettingsRepository
 from aegis.db.walk_forward_repository import WalkForwardRepository
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrderError, BingXRestError
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceOrderError, BinanceRestError
 from aegis.regime.service import classify_regime
 from aegis.risk.rules import compute_drawdown_pct
+from aegis.strategy.strategies import ALL_STRATEGY_IDS
 from aegis.technical.service import compute_snapshot
 
 router = APIRouter()
@@ -619,6 +624,55 @@ async def get_regime_summary(
             "adx_14": regime.adx_14, "volatility_percentile_100": regime.volatility_percentile_100,
         })
     return {"interval": _TRADING_INTERVAL, "symbols": rows}
+
+
+# -- strategy enable/disable toggle (Fase 17f) ---------------------------------
+@router.get("/settings/strategies")
+async def get_strategy_settings(
+    strategy_settings_repo: StrategySettingsRepository = Depends(get_strategy_settings_repo),
+) -> dict:
+    settings_by_id = await strategy_settings_repo.get_all_settings(ALL_STRATEGY_IDS)
+    return {"strategies": [{"strategy_id": sid, "enabled": enabled} for sid, enabled in settings_by_id.items()]}
+
+
+class StrategyToggleRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/settings/strategies/{strategy_id}")
+async def set_strategy_enabled(
+    strategy_id: str, body: StrategyToggleRequest,
+    strategy_settings_repo: StrategySettingsRepository = Depends(get_strategy_settings_repo),
+) -> dict:
+    if strategy_id not in ALL_STRATEGY_IDS:
+        raise HTTPException(status_code=404, detail=f"unknown strategy_id {strategy_id!r}")
+    await strategy_settings_repo.set_enabled(strategy_id, body.enabled)
+    return {"strategy_id": strategy_id, "enabled": body.enabled}
+
+
+# -- capital allocation (Fase 17g - Shadow BingX / Momentum BingX split) ------
+@router.get("/settings/capital-allocation")
+async def get_capital_allocation(
+    capital_allocation_repo: CapitalAllocationRepository = Depends(get_capital_allocation_repo),
+) -> dict:
+    return {"allocations": await capital_allocation_repo.get_all_allocations()}
+
+
+class CapitalAllocationRequest(BaseModel):
+    shadow_bingx_pct: float
+    momentum_bingx_pct: float
+
+
+@router.post("/settings/capital-allocation")
+async def set_capital_allocation(
+    body: CapitalAllocationRequest,
+    capital_allocation_repo: CapitalAllocationRepository = Depends(get_capital_allocation_repo),
+) -> dict:
+    try:
+        await capital_allocation_repo.set_allocations(body.shadow_bingx_pct, body.momentum_bingx_pct)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"allocations": await capital_allocation_repo.get_all_allocations()}
 
 
 def _stale_threshold_seconds(interval: str) -> float:

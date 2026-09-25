@@ -37,9 +37,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aegis.execution.models import BracketOpenError  # noqa: F401 - re-exported, see below
 from aegis.providers.bingx.models import OrderResult, PositionRisk
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrderError
 
+# BracketOpenError moved to aegis.execution.models (Fase 17d) so it's the
+# SAME class BinanceExecutionProvider raises - re-exported here so existing
+# code/tests importing `from aegis.execution.bingx_provider import
+# BracketOpenError` keep working unchanged. This used to be a SEPARATE
+# look-alike class, which meant ShadowTradingEngine/MomentumTradingEngine's
+# `except BracketOpenError` (bound to Binance's copy) never caught the one
+# BingXExecutionProvider actually raised - see models.py's docstring for
+# the real crash this caused.
 _UNKNOWN_ORDER_CODE = 109421  # BingX: "order does not exist" - already gone, not a failure
 
 
@@ -58,16 +67,6 @@ class TrailingBracketOrders:
     entry: OrderResult
     stop: OrderResult
     trailing_stop: OrderResult
-
-
-class BracketOpenError(RuntimeError):
-    """Same shape as `aegis.execution.binance_provider.BracketOpenError` -
-    `flattened` says whether the emergency close succeeded (True) or also
-    failed (False - manual intervention is required immediately)."""
-
-    def __init__(self, message: str, flattened: bool) -> None:
-        super().__init__(message)
-        self.flattened = flattened
 
 
 class BingXExecutionProvider:

@@ -31,6 +31,21 @@ def test_excludes_non_usdt_pairs():
     assert [c.symbol for c in result] == ["ETHUSDT"]
 
 
+def test_excludes_bingx_non_crypto_nnco_prefixed_instruments():
+    # Regression (Fase 17e): BingX's tokenized commodity/FX-cross contracts
+    # (gold, oil, wheat, XAU/EUR, ...) clear both the "USDT" suffix and the
+    # liquidity floor like any real pair, but BingX rejects order placement
+    # for them on a one-way-mode API account (code 101414) - this crashed
+    # the whole momentum process before this filter existed (and before
+    # Fase 17d's separate BracketOpenError fix).
+    tickers = [
+        _ticker("NCCOGOLD2USDUSDT", 0.0, 785_000_000),  # the real symbol that caused the crash
+        _ticker("BTCUSDT", 3.0, 1_000_000_000),
+    ]
+    result = rank_by_momentum(tickers, min_quote_volume=100_000_000)
+    assert [c.symbol for c in result] == ["BTCUSDT"]
+
+
 def test_excludes_explicit_exclusion_set():
     tickers = [_ticker("BTCUSDT", 10.0, 1_000_000_000), _ticker("ETHUSDT", 3.0, 1_000_000_000)]
     result = rank_by_momentum(tickers, min_quote_volume=100_000_000, exclude={"BTCUSDT"})

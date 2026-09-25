@@ -43,10 +43,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aegis.config import get_settings  # noqa: E402
 from aegis.db.bingx_account_repository import BingxAccountRepository  # noqa: E402
+from aegis.db.capital_allocation_repository import CapitalAllocationRepository  # noqa: E402
 from aegis.db.engine import close_pool, create_pool  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
 from aegis.db.momentum_repository import MomentumRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
+from aegis.db.strategy_settings_repository import StrategySettingsRepository  # noqa: E402
 from aegis.execution.bingx_session import BingxCredentialsNotConfigured, BingxSessionManager  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.momentum.engine import MomentumTradingEngine  # noqa: E402
@@ -74,6 +76,8 @@ async def _main() -> None:
     pool = await create_pool(settings)
     momentum_repo = MomentumRepository(pool)
     risk_repo = RiskRepository(pool)
+    strategy_settings_repo = StrategySettingsRepository(pool)
+    capital_allocation_repo = CapitalAllocationRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     account_repo = BingxAccountRepository(pool, settings.credential_encryption_key)
@@ -106,7 +110,10 @@ async def _main() -> None:
                 await asyncio.sleep(settings.momentum_poll_interval_seconds)
                 continue
 
-            engine = MomentumTradingEngine(session.rest, momentum_repo, risk_repo, kill_switch_repo, session.execution, settings)
+            engine = MomentumTradingEngine(session.rest, momentum_repo, risk_repo, kill_switch_repo, session.execution, settings,
+                                            strategy_settings_repo=strategy_settings_repo,
+                                            capital_allocation_repo=capital_allocation_repo,
+                                            capital_allocation_key="momentum_bingx")
             config = _build_config(account_id, settings)
 
             await risk_repo.initialize_account_state(account_id, starting_equity=starting_equity)

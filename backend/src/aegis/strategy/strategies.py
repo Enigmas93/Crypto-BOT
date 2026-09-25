@@ -8,26 +8,20 @@ to be). TREND_PULLBACK/BREAKOUT/MEAN_REVERSION take only a
 WAIT_FOR_CONFIRMATION/CONFIRMED verdict) - still a pure function, still no
 I/O, the caller is responsible for fetching that status.
 
-LIQUIDATION_SQUEEZE (`evaluate_liquidation_squeeze`, Fase 17) is now
-implemented and unit tested with synthetic data - the logic itself is
-correct - but is DELIBERATELY excluded from `ALL_STRATEGY_IDS`, same
-treatment as EVENT_REACTION below, for a documented reason found live
-2026-09-23: after the Liquidation Engine ran continuously for months, the
-`liquidations` table held zero genuine events for any of the real 7 traded
-symbols (every row that existed was leftover integration-test debris, now
-cleaned up - see tests/conftest.py). The engine, its WebSocket subscription
-and its filtering are all confirmed working correctly; Binance Futures
-TESTNET simply does not appear to generate meaningful forced-liquidation
-volume the way mainnet does. Silently activating this strategy in Paper/
-Shadow/Momentum now would mean it sits there, tested only against
-fabricated inputs, waiting for a feed that has essentially never fired -
-exactly the "shipping untested logic dressed up as tested" this codebase
-avoids everywhere else. It can be explicitly opted into (`evaluate_all`
-takes it in `strategy_ids` and now also accepts `derivatives_snapshot`/
-`liquidation_snapshot`) for backtesting or manual research once there's
-real liquidation volume to validate it against - realistically once BingX
-Momentum (which does trade a real market) also collects liquidation data,
-which it does not yet.
+LIQUIDATION_SQUEEZE (`evaluate_liquidation_squeeze`) was held out of
+`ALL_STRATEGY_IDS` at first (Fase 17) for a documented reason: after the
+Liquidation Engine ran continuously for months, the `liquidations` table
+held zero genuine events for any of the real 7 traded symbols on Binance
+Futures TESTNET. The user explicitly asked (Fase 17e) to activate it and
+confirm it's live anyway, understanding that caveat - it is now in
+`ALL_STRATEGY_IDS` and wired with REAL derivatives/liquidation data in
+Paper and Shadow Trading (Binance) via `aegis.strategy.market_context`.
+It stays functionally inert (always NO_TRADE) for every BingX account
+(shadow_bingx/momentum_bingx, demo or live) and for Momentum's dynamic
+scanner-picked universe, because neither BingX nor Momentum's arbitrary
+candidates have derivatives/liquidation data collected anywhere in this
+codebase - a real, disclosed limitation, not a silent gap: it will start
+contributing real votes there only once that collection exists.
 
 EVENT_REACTION's own limitation, different in kind: `news_asset_status`
 (aegis/db/news_repository.py) is a single upserted row per asset - the
@@ -66,7 +60,9 @@ STRATEGY_LIQUIDATION_SQUEEZE = "LIQUIDATION_SQUEEZE"
 # EVENT_REACTION is intentionally excluded - see module docstring (no
 # point-in-time news history yet, so it can't be backtested honestly and
 # must not silently activate in any live engine until it can be).
-ALL_STRATEGY_IDS = (STRATEGY_TREND_PULLBACK, STRATEGY_BREAKOUT, STRATEGY_MEAN_REVERSION)
+ALL_STRATEGY_IDS = (
+    STRATEGY_TREND_PULLBACK, STRATEGY_BREAKOUT, STRATEGY_MEAN_REVERSION, STRATEGY_LIQUIDATION_SQUEEZE,
+)
 
 
 def _no_trade(strategy_id: str, snapshot: TechnicalSnapshot, reasons: list[str]) -> StrategySignal:

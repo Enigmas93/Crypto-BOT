@@ -42,10 +42,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from aegis.config import get_settings  # noqa: E402
 from aegis.db.bingx_account_repository import BingxAccountRepository  # noqa: E402
 from aegis.db.candle_repository import CandleRepository  # noqa: E402
+from aegis.db.capital_allocation_repository import CapitalAllocationRepository  # noqa: E402
 from aegis.db.engine import close_pool, create_pool  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
 from aegis.db.shadow_repository import ShadowRepository  # noqa: E402
+from aegis.db.strategy_settings_repository import StrategySettingsRepository  # noqa: E402
 from aegis.execution.bingx_session import BingxCredentialsNotConfigured, BingxSessionManager  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
@@ -78,6 +80,8 @@ async def _main() -> None:
     candle_repo = CandleRepository(pool)
     shadow_repo = ShadowRepository(pool)
     risk_repo = RiskRepository(pool)
+    strategy_settings_repo = StrategySettingsRepository(pool)
+    capital_allocation_repo = CapitalAllocationRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     account_repo = BingxAccountRepository(pool, settings.credential_encryption_key)
@@ -117,7 +121,10 @@ async def _main() -> None:
                 continue
 
             await risk_repo.initialize_account_state(account_id, starting_equity=starting_equity)
-            engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, session.execution, settings)
+            engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, session.execution, settings,
+                                          strategy_settings_repo=strategy_settings_repo,
+                                          capital_allocation_repo=capital_allocation_repo,
+                                          capital_allocation_key="shadow_bingx")
             configs = _build_configs(account_id, settings)
             log_event(
                 _LOG, "session_started", account_id=account_id, mode=session.mode,

@@ -231,12 +231,18 @@ def test_liquidation_squeeze_no_trade_when_squeeze_score_is_none():
     assert signal.signal == "NO_TRADE"
 
 
-def test_liquidation_squeeze_is_excluded_from_evaluate_all_by_default():
+def test_liquidation_squeeze_is_included_in_evaluate_all_by_default():
+    # Fase 17e: the user explicitly asked to activate it - it's now in
+    # ALL_STRATEGY_IDS, but stays NO_TRADE without derivatives/liquidation
+    # data (which this call doesn't supply), same as any other missing-data
+    # case every strategy here already handles.
     snapshot = _snapshot(close=110.0, ema_50=105.0, ema_200=100.0, adx_14=25.0, rsi_14=50.0,
                           market_structure_trend="UPTREND", breakout=False, breakdown=False,
                           volume_zscore_20=0.0, distance_from_vwap_pct=0.0)
     signals = evaluate_all(snapshot)
-    assert STRATEGY_LIQUIDATION_SQUEEZE not in {s.strategy_id for s in signals}
+    assert STRATEGY_LIQUIDATION_SQUEEZE in {s.strategy_id for s in signals}
+    squeeze_signal = next(s for s in signals if s.strategy_id == STRATEGY_LIQUIDATION_SQUEEZE)
+    assert squeeze_signal.signal == "NO_TRADE"
 
 
 def test_liquidation_squeeze_can_be_explicitly_requested_from_evaluate_all():
@@ -259,8 +265,10 @@ def test_evaluate_all_returns_one_signal_per_strategy():
                           market_structure_trend="UPTREND", breakout=False, breakdown=False,
                           volume_zscore_20=0.0, distance_from_vwap_pct=0.0)
     signals = evaluate_all(snapshot)
-    assert len(signals) == 3
-    assert {s.strategy_id for s in signals} == {STRATEGY_TREND_PULLBACK, STRATEGY_BREAKOUT, STRATEGY_MEAN_REVERSION}
+    assert len(signals) == 4
+    assert {s.strategy_id for s in signals} == {
+        STRATEGY_TREND_PULLBACK, STRATEGY_BREAKOUT, STRATEGY_MEAN_REVERSION, STRATEGY_LIQUIDATION_SQUEEZE,
+    }
 
 
 def test_evaluate_all_ignores_news_status_when_event_reaction_not_requested():
@@ -275,7 +283,7 @@ def test_evaluate_all_ignores_news_status_when_event_reaction_not_requested():
     confirmed = AssetNewsStatus(asset="BTC", status="CONFIRMED", distinct_sources=3,
                                  item_count=5, dominant_sentiment="positive")
     signals = evaluate_all(snapshot, news_status=confirmed)
-    assert len(signals) == 3
+    assert len(signals) == 4
     assert STRATEGY_EVENT_REACTION not in {s.strategy_id for s in signals}
 
 

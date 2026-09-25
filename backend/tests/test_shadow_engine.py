@@ -256,6 +256,43 @@ def _engine(df, account=None, kill_switch_triggered=False):
 
 
 @pytest.mark.asyncio
+class _FakeStrategySettingsRepo:
+    def __init__(self, disabled: set[str]):
+        self.disabled = disabled
+        self.calls: list[tuple] = []
+
+    async def filter_enabled(self, strategy_ids):
+        self.calls.append(strategy_ids)
+        return tuple(sid for sid in strategy_ids if sid not in self.disabled)
+
+
+@pytest.mark.asyncio
+async def test_effective_strategy_ids_filters_disabled_strategies():
+    # Fase 17f: the dashboard's per-strategy enable/disable toggle - the
+    # engine defers entirely to the repo when one is configured.
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    engine, *_ = _engine(df)
+    engine.strategy_settings_repo = _FakeStrategySettingsRepo(disabled={"BREAKOUT"})
+
+    result = await engine._effective_strategy_ids(("TREND_PULLBACK", "BREAKOUT", "MEAN_REVERSION"))
+
+    assert result == ("TREND_PULLBACK", "MEAN_REVERSION")
+
+
+@pytest.mark.asyncio
+async def test_effective_strategy_ids_is_a_no_op_without_a_repo_configured():
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    engine, *_ = _engine(df)
+    assert engine.strategy_settings_repo is None
+
+    result = await engine._effective_strategy_ids(("TREND_PULLBACK", "BREAKOUT"))
+
+    assert result == ("TREND_PULLBACK", "BREAKOUT")
+
+
+@pytest.mark.asyncio
 async def test_sync_equity_writes_the_executions_real_equity_into_risk_repo():
     # Fase 17b: position sizing must use the exchange's real balance, not a
     # locally-tracked number that can drift from it (found live: a demo
@@ -269,6 +306,44 @@ async def test_sync_equity_writes_the_executions_real_equity_into_risk_repo():
     await engine.sync_equity("shadow")
 
     assert risk_repo.sync_equity_calls[-1] == ("shadow", pytest.approx(987.65))
+
+
+class _FakeCapitalAllocationRepo:
+    def __init__(self, pct: float):
+        self.pct = pct
+
+    async def get_allocation(self, engine):
+        return self.pct
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_scales_down_by_the_configured_capital_allocation():
+    # Fase 17g: shadow_bingx and momentum_bingx share ONE real BingX
+    # balance - sizing must operate on this engine's own slice, not the
+    # whole account.
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    engine, _, risk_repo, _, execution = _engine(df)
+    execution.equity = 1000.0
+    engine.capital_allocation_repo = _FakeCapitalAllocationRepo(0.6)
+    engine.capital_allocation_key = "shadow_bingx"
+
+    await engine.sync_equity("shadow_bingx_live")
+
+    assert risk_repo.sync_equity_calls[-1] == ("shadow_bingx_live", pytest.approx(600.0))
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_uses_full_equity_without_an_allocation_configured():
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    engine, _, risk_repo, _, execution = _engine(df)
+    execution.equity = 1000.0
+    assert engine.capital_allocation_repo is None
+
+    await engine.sync_equity("shadow")
+
+    assert risk_repo.sync_equity_calls[-1] == ("shadow", pytest.approx(1000.0))
 
 
 @pytest.mark.asyncio

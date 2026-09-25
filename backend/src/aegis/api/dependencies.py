@@ -21,6 +21,8 @@ from aegis.db.news_repository import NewsRepository
 from aegis.db.paper_repository import PaperRepository
 from aegis.db.risk_repository import RiskRepository
 from aegis.db.shadow_repository import ShadowRepository
+from aegis.db.capital_allocation_repository import CapitalAllocationRepository
+from aegis.db.strategy_settings_repository import StrategySettingsRepository
 from aegis.db.walk_forward_repository import WalkForwardRepository
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient
 
@@ -90,3 +92,11 @@ def get_macro_repo(request: Request) -> MacroRepository:
 
 def get_walk_forward_repo(request: Request) -> WalkForwardRepository:
     return WalkForwardRepository(request.app.state.pool)
+
+
+def get_strategy_settings_repo(request: Request) -> StrategySettingsRepository:
+    return StrategySettingsRepository(request.app.state.pool)
+
+
+def get_capital_allocation_repo(request: Request) -> CapitalAllocationRepository:
+    return CapitalAllocationRepository(request.app.state.pool)

@@ -123,6 +123,9 @@ let cache = {
   killSwitchEvents: {}, // account_id -> events[]
   tradesByAccount: {}, // account_id -> trades[]
   bingxSettings: { mode: "demo", credentials_configured: false, updated_at: null },
+  strategySettings: { strategies: [] },
+  capitalAllocation: { allocations: {} },
+  newsFull: { items: [] },
 };
 
 // -- tab / exchange switching --------------------------------------------
@@ -192,7 +195,16 @@ function activeBingxMode() {
 }
 
 function renderExchangeView(exchange) {
-  const accountIds = EXCHANGE_ACCOUNTS[exchange];
+  // BingX only ever shows the CURRENTLY ACTIVE mode's accounts (Paper +
+  // Shadow/Momentum BingX in that mode) - not both demo and real at once.
+  // User feedback: showing all 5 accounts here was too much noise,
+  // especially once a 4th strategy (LIQUIDATION_SQUEEZE) started
+  // contributing to every account's confluence too. The dormant mode's own
+  // history is still fully visible via Overview/Positions/Risk & Logs
+  // (never hidden), just not this tab's headline cards/chart/log/timeline.
+  const accountIds = exchange === "binance"
+    ? EXCHANGE_ACCOUNTS.binance
+    : ["paper", `shadow_bingx_${activeBingxMode()}`, `momentum_bingx_${activeBingxMode()}`];
   const accounts = cache.overview.accounts || {};
   const primaryAccountId = exchange === "binance" ? "shadow" : `shadow_bingx_${activeBingxMode()}`;
   const primary = accounts[primaryAccountId];
@@ -202,19 +214,16 @@ function renderExchangeView(exchange) {
   // the exchange's primary real-money-track account - matches the
   // Console Tático reference more closely than a flattened 3-line
   // comparison would; the Overview tab still shows all accounts together.
-  // For BingX this always follows whichever mode is currently ACTIVE - the
-  // dormant mode's own history is still fully visible via Overview/
-  // Positions/Risk & Logs (never hidden), just not the tab's headline chart.
   renderComboChart(`chart-${exchange}`, [primaryAccountId]);
   renderActivityList(`activity-${exchange}`, accountIds);
   renderStrategyGrid(`strategies-${exchange}`, accountIds);
   const realAccounts = exchange === "binance"
     ? ["shadow", "momentum"]
-    : ["shadow_bingx_demo", "shadow_bingx_live", "momentum_bingx_demo", "momentum_bingx_live"];
+    : [`shadow_bingx_${activeBingxMode()}`, `momentum_bingx_${activeBingxMode()}`];
   // showAccountColumn=true here even though this table only ever holds
-  // ONE exchange's positions - it still mixes Shadow and Momentum (and,
-  // for BingX, Demo and Real), and without this column there was no way to
-  // tell which strategy/mode opened a given position.
+  // ONE exchange's positions - it still mixes Shadow and Momentum, and
+  // without this column there was no way to tell which strategy opened a
+  // given position.
   renderPositionsTable(`positions-table-${exchange}`, realAccounts, true);
   renderRiskMonitor(`risk-${exchange}`, primaryAccountId);
   renderLogFeed(`feed-${exchange}`, accountIds);
@@ -522,7 +531,32 @@ function renderTimelineItems(entries) {
 }
 
 // -- strategies tab (all accounts) -----------------------------------------
-function renderStrategiesTab() { renderStrategyGrid("strategies-all", Object.keys(ACCOUNTS)); }
+function renderStrategiesTab() {
+  renderStrategyGrid("strategies-all", Object.keys(ACCOUNTS));
+  renderStrategyToggles();
+}
+
+// -- strategy enable/disable toggles (Fase 17f) -----------------------------
+function renderStrategyToggles() {
+  const root = el("strategy-toggles");
+  if (!root) return;
+  const strategies = cache.strategySettings.strategies || [];
+  root.innerHTML = strategies.map((s) => `
+    <span class="chip ${s.enabled ? "active" : ""}" data-strategy="${s.strategy_id}" onclick="toggleStrategy('${s.strategy_id}', ${!s.enabled})">
+      ${s.enabled ? "&#9679;" : "&#9675;"} ${s.strategy_id.replace(/_/g, " ")}
+    </span>`).join("") || `<div class="empty">Sem estratégias configuradas</div>`;
+}
+
+window.toggleStrategy = async function (strategyId, nextEnabled) {
+  try {
+    const r = await fetch(`/api/settings/strategies/${strategyId}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: nextEnabled }),
+    });
+    if (!r.ok) { alert(`Falha ao alterar estratégia: HTTP ${r.status}`); return; }
+    cache.strategySettings = await getJSON("/api/settings/strategies");
+    renderStrategyToggles();
+  } catch (e) { alert(`Erro: ${e.message}`); }
+};
 
 // -- positions tab (consolidated) -------------------------------------------
 function renderPositionsTab() { renderPositionsTable("positions-table-all", Object.keys(ACCOUNTS), true); }
@@ -758,9 +792,45 @@ function renderBingxSettingsPanel() {
   const liveBtn = el("bingx-mode-live-btn");
   if (demoBtn) demoBtn.classList.toggle("active", s.mode === "demo");
   if (liveBtn) liveBtn.classList.toggle("active", s.mode === "live");
+
+  const allocations = cache.capitalAllocation.allocations || {};
+  const shadowDisplay = el("allocation-shadow-display");
+  const momentumDisplay = el("allocation-momentum-display");
+  if (shadowDisplay) shadowDisplay.textContent = allocations.shadow_bingx !== undefined ? fmtPct(allocations.shadow_bingx, 0) : "—";
+  if (momentumDisplay) momentumDisplay.textContent = allocations.momentum_bingx !== undefined ? fmtPct(allocations.momentum_bingx, 0) : "—";
 }
 
 window.toggleBingxSettings = toggleBingxSettings;
+
+window.saveCapitalAllocation = async function () {
+  const status = el("allocation-save-status");
+  const shadowPct = parseFloat(el("allocation-shadow-input").value);
+  const momentumPct = parseFloat(el("allocation-momentum-input").value);
+  if (Number.isNaN(shadowPct) || Number.isNaN(momentumPct)) {
+    status.textContent = "Preencha as duas porcentagens.";
+    status.className = "settings-status down";
+    return;
+  }
+  status.textContent = "Salvando...";
+  status.className = "settings-status";
+  try {
+    const r = await fetch("/api/settings/capital-allocation", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shadow_bingx_pct: shadowPct / 100, momentum_bingx_pct: momentumPct / 100 }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { status.textContent = body.detail || `Falha (HTTP ${r.status})`; status.className = "settings-status down"; return; }
+    status.textContent = "Repartição salva.";
+    status.className = "settings-status up";
+    el("allocation-shadow-input").value = "";
+    el("allocation-momentum-input").value = "";
+    cache.capitalAllocation = await getJSON("/api/settings/capital-allocation");
+    renderBingxSettingsPanel();
+  } catch (e) {
+    status.textContent = `Erro: ${e.message}`;
+    status.className = "settings-status down";
+  }
+};
 
 window.saveBingxCredentials = async function () {
   const apiKey = el("bingx-api-key-input").value.trim();
@@ -847,13 +917,43 @@ function renderAll() {
   renderStrategiesTab();
   renderPositionsTab();
   renderOrdersTab();
+  renderNewsTab();
   renderRiskLogsTab();
+}
+
+// -- news tab (full feed, all collected sources) -----------------------------
+function renderNewsTab() {
+  const statusBody = el("news-status-table-full");
+  if (statusBody) {
+    const pillClass = (status) => (status === "CLEAR" ? "ok" : status === "NEWS_CONFLICT" ? "crit" : "warn");
+    statusBody.innerHTML = (cache.newsAssetStatus.statuses || []).map((s) => `
+      <tr><td class="num">${s.asset}</td><td><span class="pill ${pillClass(s.status)}">${s.status}</span></td>
+      <td class="num">${s.distinct_sources ?? "—"}</td><td class="num">${s.dominant_sentiment ?? "—"}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty">Sem dados</td></tr>`;
+  }
+  const feedBody = el("news-feed-full");
+  if (feedBody) {
+    const sentimentPill = (s) => (
+      s === "positive" ? '<span class="pill long">POSITIVO</span>'
+      : s === "negative" ? '<span class="pill short">NEGATIVO</span>'
+      : '<span class="pill neutral">NEUTRO</span>'
+    );
+    const items = cache.newsFull.items || [];
+    feedBody.innerHTML = items.map((n) => `
+      <tr><td class="num">${fmtTime(n.published_at)}</td>
+      <td class="num">${n.source_id}</td>
+      <td>${escapeHtml(n.title)}</td>
+      <td>${sentimentPill(n.sentiment)}</td>
+      <td class="num">${n.magnitude || "—"}</td>
+      <td class="num">${n.source_quality_score !== null && n.source_quality_score !== undefined ? fmtPct(n.source_quality_score, 0) : "—"}</td></tr>`).join("")
+      || `<tr><td colspan="6" class="empty">Nenhuma notícia coletada ainda</td></tr>`;
+  }
 }
 
 // -- data refresh --------------------------------------------------------
 async function refreshData() {
   const accountIds = Object.keys(ACCOUNTS);
-  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health, macro, derivatives, liquidations, regime, bingxSettings] = await Promise.all([
+  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health, macro, derivatives, liquidations, regime, bingxSettings, strategySettings, capitalAllocation, newsFull] = await Promise.all([
     getJSON("/api/overview"),
     getJSON("/api/positions"),
     getJSON("/api/journal?limit=50"),
@@ -869,6 +969,9 @@ async function refreshData() {
     getJSON("/api/market/liquidations"),
     getJSON("/api/market/regime"),
     getJSON("/api/settings/bingx").catch(() => cache.bingxSettings),
+    getJSON("/api/settings/strategies").catch(() => cache.strategySettings),
+    getJSON("/api/settings/capital-allocation").catch(() => cache.capitalAllocation),
+    getJSON("/api/news/recent?limit=150").catch(() => cache.newsFull),
   ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
@@ -887,7 +990,7 @@ async function refreshData() {
   cache = {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health,
-    macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings,
+    macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings, strategySettings, capitalAllocation, newsFull,
     tradesByAccount: cache.tradesByAccount,
   };
 }

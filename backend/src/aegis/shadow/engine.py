@@ -21,20 +21,24 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from aegis.execution.binance_provider import BracketOpenError
 from aegis.execution.fills import apply_slippage, close_position, compute_stop, compute_take_profit
-from aegis.execution.models import OpenPosition
+from aegis.execution.models import BracketOpenError, OpenPosition
 from aegis.risk.correlation import compute_account_correlated_exposure_from_candles
 from aegis.risk.service import RiskEngine, TradeProposal
 from aegis.risk.sizing import round_down_to_step
 from aegis.shadow.models import ShadowPosition, ShadowTrade, ShadowTradingConfig
 from aegis.strategy.confluence import combine_signals
+from aegis.strategy.market_context import fetch_derivatives_snapshot, fetch_liquidation_snapshot
 from aegis.strategy.strategies import evaluate_all
 from aegis.technical.service import compute_snapshot
 
 
 class ShadowTradingEngine:
-    def __init__(self, candle_repo, shadow_repo, risk_repo, kill_switch_repo, execution, risk_settings) -> None:
+    def __init__(
+        self, candle_repo, shadow_repo, risk_repo, kill_switch_repo, execution, risk_settings,
+        derivatives_repo=None, liquidation_repo=None, strategy_settings_repo=None,
+        capital_allocation_repo=None, capital_allocation_key=None,
+    ) -> None:
         self.candle_repo = candle_repo
         self.shadow_repo = shadow_repo
         self.risk_repo = risk_repo
@@ -42,6 +46,45 @@ class ShadowTradingEngine:
         self.execution = execution
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
+        # Optional (Fase 17e) - only STRATEGY_LIQUIDATION_SQUEEZE needs
+        # these, and only for Binance's fixed symbol universe (where
+        # DerivativesEngine/LiquidationEngine actually collect data). None
+        # for shadow_bingx: BingX has no derivatives/liquidation collection
+        # yet, so the strategy correctly stays inert (NO_TRADE) there
+        # rather than erroring - see aegis.strategy.market_context.
+        self.derivatives_repo = derivatives_repo
+        self.liquidation_repo = liquidation_repo
+        # Optional (Fase 17f) - per-strategy enable/disable toggle from the
+        # dashboard. None means "no filtering" (every ALL_STRATEGY_IDS
+        # member stays active), matching every existing test/caller that
+        # doesn't pass this.
+        self.strategy_settings_repo = strategy_settings_repo
+        # Optional (Fase 17g) - splits a shared real BingX balance between
+        # this engine and its sibling (e.g. shadow_bingx vs momentum_bingx)
+        # so neither sizes a position assuming it alone owns the whole
+        # account - see migration 0021's docstring. None/no key means no
+        # scaling (100% of get_equity()), matching Binance/Paper, which
+        # never share a real balance with anything.
+        self.capital_allocation_repo = capital_allocation_repo
+        self.capital_allocation_key = capital_allocation_key
+
+    async def _effective_strategy_ids(self, strategy_ids: tuple[str, ...]) -> tuple[str, ...]:
+        if self.strategy_settings_repo is None:
+            return strategy_ids
+        return await self.strategy_settings_repo.filter_enabled(strategy_ids)
+
+    async def _fetch_market_context(self, symbol: str, interval: str) -> tuple:
+        if self.derivatives_repo is None or self.liquidation_repo is None:
+            return None, None
+        derivatives_snapshot = await fetch_derivatives_snapshot(
+            self.derivatives_repo, self.candle_repo, symbol, interval,
+            self.risk_settings.funding_zscore_lookback, self.risk_settings.derivatives_hist_limit,
+        )
+        liquidation_snapshot = await fetch_liquidation_snapshot(
+            self.liquidation_repo, symbol,
+            self.risk_settings.liquidation_window_seconds, self.risk_settings.liquidation_baseline_buckets,
+        )
+        return derivatives_snapshot, liquidation_snapshot
 
     async def sync_equity(self, account_id: str) -> None:
         """Call once per poll cycle (not once per symbol - it's the same
@@ -51,8 +94,15 @@ class ShadowTradingEngine:
         BingXExecutionProvider.get_equity/RiskRepository.
         sync_equity_from_exchange for why locally-tracked equity drifts
         from the exchange's real balance and why that matters far more once
-        real money (not testnet/VST) is involved."""
+        real money (not testnet/VST) is involved. Scaled down by this
+        engine's capital_allocation_pct (Fase 17g) when configured - the
+        real exchange balance is shared with a sibling engine (e.g.
+        Momentum BingX), so sizing must operate on this engine's own slice,
+        not the whole account."""
         real_equity = await self.execution.get_equity()
+        if self.capital_allocation_repo is not None and self.capital_allocation_key is not None:
+            allocation_pct = await self.capital_allocation_repo.get_allocation(self.capital_allocation_key)
+            real_equity *= allocation_pct
         await self.risk_repo.sync_equity_from_exchange(account_id, real_equity)
 
     async def _update_exposure(self, account_id: str, interval: str) -> None:
@@ -153,7 +203,12 @@ class ShadowTradingEngine:
             return {"action": "KILL_SWITCH_BLOCKED", "reasons": kill_state.reasons}
 
         snapshot = compute_snapshot(config.symbol, config.interval, df)
-        signals = evaluate_all(snapshot, config.strategy_ids)
+        derivatives_snapshot, liquidation_snapshot = await self._fetch_market_context(config.symbol, config.interval)
+        strategy_ids = await self._effective_strategy_ids(config.strategy_ids)
+        signals = evaluate_all(
+            snapshot, strategy_ids,
+            derivatives_snapshot=derivatives_snapshot, liquidation_snapshot=liquidation_snapshot,
+        )
         confluence = combine_signals(signals, config.strategy_weights, config.confluence_threshold)
         await self.shadow_repo.set_cursor(account_id, config.symbol, config.interval, latest_closed["close_time"])
 

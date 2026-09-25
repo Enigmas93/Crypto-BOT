@@ -39,6 +39,7 @@ from aegis.db.engine import close_pool, create_pool  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
 from aegis.db.momentum_repository import MomentumRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
+from aegis.db.strategy_settings_repository import StrategySettingsRepository  # noqa: E402
 from aegis.execution.binance_provider import BinanceExecutionProvider  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.momentum.engine import MomentumTradingEngine  # noqa: E402
@@ -72,10 +73,12 @@ async def _main() -> None:
     pool = await create_pool(settings)
     momentum_repo = MomentumRepository(pool)
     risk_repo = RiskRepository(pool)
+    strategy_settings_repo = StrategySettingsRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     execution = BinanceExecutionProvider(rest)
-    engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings)
+    engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings,
+                                    strategy_settings_repo=strategy_settings_repo)
 
     account_id = settings.momentum_account_id
     config = MomentumConfig(

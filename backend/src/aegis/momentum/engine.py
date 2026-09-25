@@ -31,9 +31,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from aegis.execution.binance_provider import BracketOpenError
 from aegis.execution.fills import apply_slippage, close_position, compute_stop
-from aegis.execution.models import OpenPosition
+from aegis.execution.models import BracketOpenError, OpenPosition
 from aegis.momentum.candles import klines_to_closed_dataframe
 from aegis.momentum.models import MomentumConfig, MomentumPosition, MomentumTrade
 from aegis.risk.correlation import compute_account_correlated_exposure_from_rest
@@ -46,7 +45,10 @@ from aegis.technical.service import compute_snapshot
 
 
 class MomentumTradingEngine:
-    def __init__(self, rest_client, momentum_repo, risk_repo, kill_switch_repo, execution, risk_settings) -> None:
+    def __init__(
+        self, rest_client, momentum_repo, risk_repo, kill_switch_repo, execution, risk_settings,
+        strategy_settings_repo=None, capital_allocation_repo=None, capital_allocation_key=None,
+    ) -> None:
         self.rest = rest_client
         self.momentum_repo = momentum_repo
         self.risk_repo = risk_repo
@@ -54,13 +56,29 @@ class MomentumTradingEngine:
         self.execution = execution
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
+        # Optional (Fase 17f) - per-strategy enable/disable toggle. None
+        # means "no filtering", matching every existing caller.
+        self.strategy_settings_repo = strategy_settings_repo
+        # Optional (Fase 17g) - see ShadowTradingEngine's identical fields
+        # for why (splits one shared real BingX balance between siblings).
+        self.capital_allocation_repo = capital_allocation_repo
+        self.capital_allocation_key = capital_allocation_key
+
+    async def _effective_strategy_ids(self, strategy_ids: tuple[str, ...]) -> tuple[str, ...]:
+        if self.strategy_settings_repo is None:
+            return strategy_ids
+        return await self.strategy_settings_repo.filter_enabled(strategy_ids)
 
     async def sync_equity(self, account_id: str) -> None:
         """Call once per poll cycle (not once per symbol), before
         evaluating any entry - Fase 17b's real-money position-sizing safety
         fix. See ShadowTradingEngine.sync_equity / BingXExecutionProvider.
-        get_equity / RiskRepository.sync_equity_from_exchange for why."""
+        get_equity / RiskRepository.sync_equity_from_exchange for why.
+        Scaled by capital_allocation_pct (Fase 17g) when configured."""
         real_equity = await self.execution.get_equity()
+        if self.capital_allocation_repo is not None and self.capital_allocation_key is not None:
+            allocation_pct = await self.capital_allocation_repo.get_allocation(self.capital_allocation_key)
+            real_equity *= allocation_pct
         await self.risk_repo.sync_equity_from_exchange(account_id, real_equity)
 
     async def _update_exposure(self, account_id: str, interval: str) -> None:
@@ -163,7 +181,8 @@ class MomentumTradingEngine:
             return {"action": "KILL_SWITCH_BLOCKED", "reasons": kill_state.reasons}
 
         snapshot = compute_snapshot(symbol, config.interval, df)
-        signals = evaluate_all(snapshot, config.strategy_ids)
+        strategy_ids = await self._effective_strategy_ids(config.strategy_ids)
+        signals = evaluate_all(snapshot, strategy_ids)
         confluence = combine_signals(signals, config.strategy_weights, config.confluence_threshold)
         await self.momentum_repo.set_cursor(account_id, symbol, config.interval, latest_closed["close_time"])
 

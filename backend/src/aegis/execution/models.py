@@ -34,3 +34,28 @@ class FillOutcome:
     fees_paid: float
     net_pnl: float
     r_multiple: float
+
+
+class BracketOpenError(RuntimeError):
+    """Raised when a bracket could not be fully established. `flattened`
+    says whether the emergency close succeeded (True) or also failed
+    (False - manual intervention is required immediately).
+
+    Shared across BinanceExecutionProvider and BingXExecutionProvider (Fase
+    17d) - each used to define its OWN separate `BracketOpenError` class
+    with an identical shape ("Same shape as..." said so in a comment), a
+    real production bug: `ShadowTradingEngine`/`MomentumTradingEngine` only
+    ever imported Binance's copy, so `except BracketOpenError` there never
+    matched the exception BingXExecutionProvider actually raised. Confirmed
+    live 2026-09-25 from a Telegram crash report: BingX rejected a stop
+    price (code 110411), the entry was correctly flattened, but the
+    resulting BracketOpenError propagated uncaught all the way to
+    `asyncio.run()` and crashed the whole `run_bingx_shadow_trading.py`
+    process - the safety property (never leave a naked position) held, but
+    the process itself shouldn't have died over a single symbol's bracket
+    failure. One shared class instead of two look-alikes makes this
+    mismatch structurally impossible going forward."""
+
+    def __init__(self, message: str, flattened: bool) -> None:
+        super().__init__(message)
+        self.flattened = flattened
