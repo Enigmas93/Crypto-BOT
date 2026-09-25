@@ -3108,6 +3108,62 @@ Dashboard) já rodando havia horas em produção real de testnet:
   reorganizado em grupos por estratégia (Paper/Shadow/Momentum) em vez de
   uma linha do tempo única misturada.
 
+## Métricas da Fase 17c (correção crítica: sizing de posição usava equity fictício, não o saldo real)
+
+- Contexto: o usuário avisou que pretende depositar **$100 reais** na conta
+  BingX assim que confiar no sistema, e pediu pra garantir que tudo
+  funciona corretamente na troca pra conta real. Isso levou a uma auditoria
+  específica de como o `RiskEngine` decide o TAMANHO de cada posição.
+- **Bug real e crítico, achado e confirmado ao vivo**: `risk_account_state.equity`
+  é inicializado com um valor fixo (`_STARTING_EQUITY = 1000.0`, hardcoded
+  nos scripts) e só é ajustado depois por `record_trade_outcome` (soma o
+  PnL de cada trade fechado localmente) - nunca é sincronizado contra o
+  saldo real da corretora. Verificado ao vivo (2026-09-25): a conta demo já
+  estava com saldo real de **$989.97** na BingX (`get_account_balance`),
+  enquanto o `equity` local ainda achava que era **$999.57** (momentum) e
+  **$988.58** (shadow) - um desalinhamento real, não hipotético. Numa conta
+  demo isso é inofensivo; numa conta real de **$100**, esse mesmo padrão
+  faria o sistema dimensionar posições como se a conta tivesse $1000 -
+  **10x o risco pretendido por trade**, um erro sério o suficiente pra
+  justificar parar e corrigir antes de qualquer depósito real.
+- Corrigido com uma fonte única de verdade: `BingXExecutionProvider.get_equity()`/
+  `BinanceExecutionProvider.get_equity()` (novo, lê o saldo real e
+  PnL não-realizado direto da corretora) +
+  `RiskRepository.sync_equity_from_exchange()` (novo, sobrescreve `equity`
+  e só ELEVA `peak_equity`, nunca abaixa - preserva o rastreio honesto de
+  drawdown). `ShadowTradingEngine.sync_equity()`/`MomentumTradingEngine.sync_equity()`
+  chamam isso uma vez por ciclo de polling (antes de qualquer decisão de
+  entrada), em `run_bingx_shadow_trading.py`/`run_bingx_momentum_trading.py`.
+  A semente inicial (`initialize_account_state`) também passou a usar o
+  saldo real na primeira inicialização, em vez do `1000.0` fixo - importante
+  porque isso também define `daily_starting_equity` do primeiro dia.
+  `daily_realized_pnl`/`daily_starting_equity` continuam sendo rastreados
+  localmente (não sincronizados) - o gate `DAILY_LOSS_LIMIT` deve responder
+  "quanto perdemos hoje de verdade", não "qual o saldo agora por acaso".
+- Verificado ao vivo depois do fix: reiniciei os dois engines da BingX, e
+  em menos de um ciclo de polling (30s) ambos convergiram pro MESMO valor
+  real de equity da corretora (**$989.69**, batendo com o saldo real
+  reportado pela API) - a divergência de antes desapareceu.
+- **Novo script `scripts/verify_bingx_live_readiness.py`**: leitura pura,
+  não coloca ordem nenhuma - lê o equity real atual (modo ativo, demo ou
+  real) e simula `calculate_position_size` pra cada símbolo configurado
+  usando preço/ATR reais e as regras reais da BingX (min_notional,
+  step_size), reportando se algum símbolo ficaria bloqueado
+  (`BELOW_MIN_NOTIONAL`/`ZERO_QUANTITY`) no tamanho de conta atual.
+  Rodado ao vivo com o equity real (~$990): os 7 símbolos passam. Rodado
+  também numa simulação específica para **$100** (o valor que o usuário
+  pretende depositar): os 7 símbolos configurados (BTCUSDT, ETHUSDT,
+  SOLUSDT, XRPUSDT, DOGEUSDT, 1000PEPEUSDT, NEARUSDT) também passam com os
+  parâmetros padrão atuais (`risk_per_trade=0.005`, `leverage=3`,
+  `stop_atr_multiple=2.0`) - o caso mais apertado é NEARUSDT (~$4.92 de
+  notional), ainda dentro do mínimo da corretora, mas o mais próximo da
+  margem. Recomendação: rodar esse script de novo logo depois do depósito
+  real, com o preço de mercado daquele momento, antes de confiar o sistema
+  a operar sozinho.
+- 715/715 testes passando (10 novos: `get_equity` nos dois providers,
+  `sync_equity_from_exchange` na integração real do RiskRepository,
+  `sync_equity` nos dois engines).
+
 ## Métricas da Fase 17b (lacunas do blueprint original: estratégia, correlação, walk-forward, regime)
 
 - Pedido do usuário logo após a Fase 17 acima: "pode continuar implementando

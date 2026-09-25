@@ -90,6 +90,36 @@ class RiskRepository:
             raise ValueError(f"no risk_account_state row for account_id={account_id!r} - initialize it first")
         return self._to_account_state(row)
 
+    async def sync_equity_from_exchange(self, account_id: str, real_equity: float) -> AccountState:
+        """Overwrites `equity` with what the exchange itself reports right
+        now (Fase 17b - real-money position-sizing safety fix). Called once
+        per cycle, BEFORE any RiskEngine sizing decision, by every engine
+        with a live exchange connection (Shadow/Momentum, Binance and
+        BingX) - locally-tracked equity (moved only by
+        `record_trade_outcome`'s per-trade math) drifts from reality over
+        time (funding payments, ADL, a real fill differing slightly from
+        the estimated one), which matters far more for a small real-money
+        account than for a demo one. `peak_equity` only ever moves up here
+        (GREATEST) - drawdown tracking must never be reset backward by a
+        single below-peak sync reading. Never touches
+        `daily_realized_pnl`/`daily_starting_equity` (that stays a locally
+        tracked running total - the DAILY_LOSS_LIMIT check is honestly
+        "how much did we lose today", not "what does today's balance
+        happen to read")."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE risk_account_state SET
+                    equity = $2, peak_equity = GREATEST(peak_equity, $2), updated_at = now()
+                WHERE account_id = $1
+                RETURNING *
+                """,
+                account_id, real_equity,
+            )
+        if row is None:
+            raise ValueError(f"no risk_account_state row for account_id={account_id!r} - initialize it first")
+        return self._to_account_state(row)
+
     async def set_exposure(
         self, account_id: str, open_positions_count: int, correlated_exposure_pct: float = 0.0,
     ) -> None:

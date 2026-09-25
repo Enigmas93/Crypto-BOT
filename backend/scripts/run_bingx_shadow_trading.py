@@ -55,7 +55,6 @@ from aegis.shadow.models import ShadowTradingConfig  # noqa: E402
 
 _LOG = get_logger("scripts.run_bingx_shadow_trading")
 _CORE_INTERVAL = "1h"
-_STARTING_EQUITY = 1000.0
 _ACCOUNT_SUFFIX = "shadow_bingx"
 
 
@@ -104,12 +103,20 @@ async def _main() -> None:
                     await asyncio.sleep(settings.paper_trading_poll_interval_seconds)
                     continue
                 rules_by_symbol = await session.rest.get_symbol_rules()
+                # Real starting balance, not a hardcoded guess (Fase 17b) -
+                # only matters the very first time this account_id is ever
+                # initialized (initialize_account_state no-ops afterward),
+                # but a wrong seed here would misprice every DAILY_LOSS_LIMIT
+                # check until the next daily reset. Whatever the user has
+                # actually deposited (e.g. $100 real money) becomes the
+                # sizing baseline, not an assumed $1000.
+                starting_equity = await session.execution.get_equity()
             except BingXRestError as exc:
                 log_event(_LOG, "transient_network_error", level=30, stage="startup_checks", error=str(exc))
                 await asyncio.sleep(settings.paper_trading_poll_interval_seconds)
                 continue
 
-            await risk_repo.initialize_account_state(account_id, starting_equity=_STARTING_EQUITY)
+            await risk_repo.initialize_account_state(account_id, starting_equity=starting_equity)
             engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, session.execution, settings)
             configs = _build_configs(account_id, settings)
             log_event(
@@ -126,6 +133,14 @@ async def _main() -> None:
                 current = await session_manager.refresh()
                 if current.mode != session.mode:
                     break
+                try:
+                    await engine.sync_equity(account_id)
+                except BingXRestError as exc:
+                    # Sizing simply uses whatever equity was last synced
+                    # (or the initial seed, on the very first cycle) - a
+                    # transient balance-fetch failure must not block the
+                    # whole cycle's exit checks on already-open positions.
+                    log_event(_LOG, "transient_network_error", level=30, stage="sync_equity", error=str(exc))
                 for config in configs:
                     symbol_rules = rules_by_symbol.get(config.symbol)
                     if symbol_rules is None:

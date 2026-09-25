@@ -93,6 +93,55 @@ async def test_reset_daily_carries_equity_forward_and_zeroes_pnl(pool):
 
 
 @pytest.mark.asyncio
+async def test_sync_equity_from_exchange_overwrites_equity_and_raises_peak(pool):
+    repo = RiskRepository(pool)
+    account_id = _account_id()
+    await repo.initialize_account_state(account_id, starting_equity=1000.0)
+
+    state = await repo.sync_equity_from_exchange(account_id, real_equity=1200.0)
+
+    assert state.equity == pytest.approx(1200.0)
+    assert state.peak_equity == pytest.approx(1200.0)
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_from_exchange_never_lowers_peak_equity(pool):
+    # A below-peak real balance (a losing run, or unrealized PnL currently
+    # negative) must sync `equity` itself but never pull `peak_equity`
+    # backward - that would understate a real drawdown.
+    repo = RiskRepository(pool)
+    account_id = _account_id()
+    await repo.initialize_account_state(account_id, starting_equity=1000.0)
+    await repo.sync_equity_from_exchange(account_id, real_equity=1500.0)
+
+    state = await repo.sync_equity_from_exchange(account_id, real_equity=1300.0)
+
+    assert state.equity == pytest.approx(1300.0)
+    assert state.peak_equity == pytest.approx(1500.0)
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_from_exchange_does_not_touch_daily_pnl_tracking(pool):
+    repo = RiskRepository(pool)
+    account_id = _account_id()
+    await repo.initialize_account_state(account_id, starting_equity=1000.0)
+    await repo.record_trade_outcome(account_id, -40.0)
+
+    state = await repo.sync_equity_from_exchange(account_id, real_equity=955.0)
+
+    assert state.equity == pytest.approx(955.0)
+    assert state.daily_realized_pnl == pytest.approx(-40.0)  # untouched by the sync
+    assert state.daily_starting_equity == pytest.approx(1000.0)  # untouched by the sync
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_from_exchange_raises_for_unknown_account(pool):
+    repo = RiskRepository(pool)
+    with pytest.raises(ValueError):
+        await repo.sync_equity_from_exchange(_account_id(), real_equity=100.0)
+
+
+@pytest.mark.asyncio
 async def test_set_exposure_updates_positions_and_correlation(pool):
     repo = RiskRepository(pool)
     account_id = _account_id()

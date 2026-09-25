@@ -97,6 +97,7 @@ class _FakeRiskRepo:
         self.outcomes: list[float] = []
         self.risk_events: list[tuple] = []
         self.exposure_calls: list[tuple] = []
+        self.sync_equity_calls: list[tuple] = []
 
     async def get_account_state(self, account_id):
         return self.account
@@ -106,6 +107,18 @@ class _FakeRiskRepo:
 
     async def set_exposure(self, account_id, open_positions_count, correlated_exposure_pct=0.0):
         self.exposure_calls.append((account_id, open_positions_count, correlated_exposure_pct))
+
+    async def sync_equity_from_exchange(self, account_id, real_equity):
+        self.sync_equity_calls.append((account_id, real_equity))
+        self.account = AccountState(
+            equity=real_equity, peak_equity=max(self.account.peak_equity, real_equity),
+            daily_starting_equity=self.account.daily_starting_equity,
+            daily_realized_pnl=self.account.daily_realized_pnl,
+            consecutive_losses=self.account.consecutive_losses,
+            open_positions_count=self.account.open_positions_count,
+            correlated_exposure_pct=self.account.correlated_exposure_pct,
+        )
+        return self.account
 
     async def record_trade_outcome(self, account_id, pnl):
         self.outcomes.append(pnl)
@@ -152,6 +165,10 @@ class _FakeExecutionProvider:
         self.bracket_error: Exception | None = None
         self.open_trailing_calls: list[tuple] = []
         self._next_id = 100
+        self.equity = 1234.56
+
+    async def get_equity(self):
+        return self.equity
 
     def set_order_status(self, order_id: int, status: str, avg_price: float = 0.0):
         self.order_statuses[order_id] = AlgoOrderResult(
@@ -234,6 +251,20 @@ def _engine(klines, account=None, kill_switch_triggered=False):
     execution = _FakeExecutionProvider()
     engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, _Settings())
     return engine, momentum_repo, risk_repo, kill_switch_repo, execution
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_writes_the_executions_real_equity_into_risk_repo():
+    # Fase 17b: position sizing must use the exchange's real balance, not a
+    # locally-tracked number that can drift from it.
+    closes, volume = _consolidation_then_breakout()
+    klines = _klines(closes, volume)
+    engine, _, risk_repo, _, execution = _engine(klines)
+    execution.equity = 987.65
+
+    await engine.sync_equity("momentum")
+
+    assert risk_repo.sync_equity_calls[-1] == ("momentum", pytest.approx(987.65))
 
 
 @pytest.mark.asyncio

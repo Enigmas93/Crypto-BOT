@@ -88,6 +88,24 @@ class BingXExecutionProvider:
         if await self.rest.get_position_mode():  # True = currently in hedge mode
             await self.rest.set_position_mode(hedge_mode=False)
 
+    async def get_equity(self) -> float:
+        """Real total equity (wallet balance + unrealized PnL), reported by
+        BingX itself - the position-sizing ground truth (Fase 17b). Found
+        live 2026-09-25 on the ALREADY-RUNNING demo account: the locally
+        tracked `risk_account_state.equity` (hardcoded to start at 1000.0)
+        had already drifted from the real VST balance (987.14 + 1.31
+        unrealized = 988.46) - harmless in demo, but sizing every position
+        off a fictitious number instead of the account's real size would be
+        a serious miscalibration the moment real money is involved (a $100
+        real deposit would otherwise be sized as if it were $1000, a 10x
+        error). BingX's Perpetual Swap balance endpoint returns a single-
+        asset list (VST for demo, USDT for real) with `equity` already
+        computed server-side - verified live against the demo endpoint."""
+        balance = await self.rest.get_account_balance()
+        if not balance:
+            raise ValueError("BingX get_account_balance() returned no entries - cannot determine real equity")
+        return float(balance[0]["equity"])
+
     async def open_bracket_position(
         self, symbol: str, side: str, quantity: float, stop_price: float, take_profit_price: float, leverage: int,
     ) -> BracketOrders:

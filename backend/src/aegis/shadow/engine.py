@@ -43,6 +43,18 @@ class ShadowTradingEngine:
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
 
+    async def sync_equity(self, account_id: str) -> None:
+        """Call once per poll cycle (not once per symbol - it's the same
+        account-wide number regardless of which symbol triggered the call),
+        BEFORE evaluating any entry for this cycle - Fase 17b's real-money
+        position-sizing safety fix. See
+        BingXExecutionProvider.get_equity/RiskRepository.
+        sync_equity_from_exchange for why locally-tracked equity drifts
+        from the exchange's real balance and why that matters far more once
+        real money (not testnet/VST) is involved."""
+        real_equity = await self.execution.get_equity()
+        await self.risk_repo.sync_equity_from_exchange(account_id, real_equity)
+
     async def _update_exposure(self, account_id: str, interval: str) -> None:
         """Recomputes open_positions_count AND correlated_exposure_pct
         (PortfolioCorrelationEngine, Fase 17) every time a position opens or

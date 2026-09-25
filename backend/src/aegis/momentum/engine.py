@@ -55,6 +55,14 @@ class MomentumTradingEngine:
         self.risk_settings = risk_settings
         self.risk_engine = RiskEngine(risk_settings)
 
+    async def sync_equity(self, account_id: str) -> None:
+        """Call once per poll cycle (not once per symbol), before
+        evaluating any entry - Fase 17b's real-money position-sizing safety
+        fix. See ShadowTradingEngine.sync_equity / BingXExecutionProvider.
+        get_equity / RiskRepository.sync_equity_from_exchange for why."""
+        real_equity = await self.execution.get_equity()
+        await self.risk_repo.sync_equity_from_exchange(account_id, real_equity)
+
     async def _update_exposure(self, account_id: str, interval: str) -> None:
         """Recomputes open_positions_count AND correlated_exposure_pct
         (PortfolioCorrelationEngine, Fase 17) every time a position opens or

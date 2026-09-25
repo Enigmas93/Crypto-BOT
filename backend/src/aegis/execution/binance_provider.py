@@ -74,6 +74,25 @@ class BinanceExecutionProvider:
     def _closing_side(side: str) -> str:
         return "SELL" if side == "LONG" else "BUY"
 
+    async def get_equity(self) -> float:
+        """Real total USDT equity (wallet balance + cross unrealized PnL),
+        reported by Binance itself - same fix and reasoning as
+        BingXExecutionProvider.get_equity (Fase 17b): local
+        `risk_account_state.equity` starting at a hardcoded 1000.0 and only
+        ever adjusted by locally-recorded trade outcomes drifts from the
+        exchange's real balance over time (verified live 2026-09-25: this
+        testnet account's real USDT balance+crossUnPnl was already ~5008,
+        nowhere near the assumed 1000). Binance never goes live in this
+        codebase (see run_shadow_trading.py's hard testnet gate), so this
+        only affects testnet realism today, but keeps the exchange-agnostic
+        engines (ShadowTradingEngine/MomentumTradingEngine) able to call
+        get_equity() identically regardless of which provider is wired in."""
+        balance = await self.rest.get_account_balance()
+        usdt = next((b for b in balance if b["asset"] == "USDT"), None)
+        if usdt is None:
+            raise ValueError("Binance get_account_balance() has no USDT entry - cannot determine real equity")
+        return float(usdt["balance"]) + float(usdt["crossUnPnl"])
+
     async def open_bracket_position(
         self, symbol: str, side: str, quantity: float, stop_price: float, take_profit_price: float, leverage: int,
     ) -> BracketOrders:

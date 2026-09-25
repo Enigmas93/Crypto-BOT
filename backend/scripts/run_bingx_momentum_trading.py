@@ -55,7 +55,6 @@ from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.providers.bingx.rest_client import BingXRestError  # noqa: E402
 
 _LOG = get_logger("scripts.run_bingx_momentum_trading")
-_STARTING_EQUITY = 1000.0
 _ACCOUNT_SUFFIX = "momentum_bingx"
 
 
@@ -99,6 +98,9 @@ async def _main() -> None:
                     )
                     await asyncio.sleep(settings.momentum_poll_interval_seconds)
                     continue
+                # Real starting balance, not a hardcoded guess (Fase 17b) -
+                # see run_bingx_shadow_trading.py's identical comment.
+                starting_equity = await session.execution.get_equity()
             except BingXRestError as exc:
                 log_event(_LOG, "transient_network_error", level=30, stage="startup_checks", error=str(exc))
                 await asyncio.sleep(settings.momentum_poll_interval_seconds)
@@ -107,7 +109,7 @@ async def _main() -> None:
             engine = MomentumTradingEngine(session.rest, momentum_repo, risk_repo, kill_switch_repo, session.execution, settings)
             config = _build_config(account_id, settings)
 
-            await risk_repo.initialize_account_state(account_id, starting_equity=_STARTING_EQUITY)
+            await risk_repo.initialize_account_state(account_id, starting_equity=starting_equity)
             log_event(
                 _LOG, "session_started", account_id=account_id, mode=session.mode, interval=config.interval,
                 min_quote_volume=config.min_quote_volume, top_n=config.top_n,
@@ -125,6 +127,10 @@ async def _main() -> None:
                 current = await session_manager.refresh()
                 if current.mode != session.mode:
                     break
+                try:
+                    await engine.sync_equity(account_id)
+                except BingXRestError as exc:
+                    log_event(_LOG, "transient_network_error", level=30, stage="sync_equity", error=str(exc))
 
                 now = time.monotonic()
                 if now - last_scan >= settings.momentum_scan_interval_seconds:

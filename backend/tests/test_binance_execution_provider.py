@@ -84,6 +84,10 @@ class _FakeRestClient:
         self.calls.append(("get_position_risk", symbol))
         return getattr(self, "_position_risk_response", [])
 
+    async def get_account_balance(self):
+        self.calls.append(("get_account_balance",))
+        return getattr(self, "_balance_response", [])
+
 
 @pytest.mark.asyncio
 async def test_open_bracket_position_happy_path():
@@ -295,3 +299,31 @@ async def test_set_leverage_failure_prevents_trailing_bracket_entry_too():
         await provider.open_trailing_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 2.0, 5)
 
     assert not any(c[0] == "place_market_order" for c in rest.calls)
+
+
+# -- get_equity (Fase 17b - real-money position-sizing safety fix) -----------
+
+@pytest.mark.asyncio
+async def test_get_equity_is_balance_plus_cross_unrealized_pnl():
+    rest = _FakeRestClient()
+    # Real shape verified live 2026-09-25 against Binance's futures balance
+    # endpoint - equity isn't a single field there, unlike BingX.
+    rest._balance_response = [
+        {"asset": "BTC", "balance": "0.01", "crossUnPnl": "0"},
+        {"asset": "USDT", "balance": "5004.47308393", "crossUnPnl": "3.72156318"},
+    ]
+    provider = BinanceExecutionProvider(rest)
+
+    equity = await provider.get_equity()
+
+    assert equity == pytest.approx(5008.19464711)
+
+
+@pytest.mark.asyncio
+async def test_get_equity_raises_when_no_usdt_entry_exists():
+    rest = _FakeRestClient()
+    rest._balance_response = [{"asset": "BTC", "balance": "0.01", "crossUnPnl": "0"}]
+    provider = BinanceExecutionProvider(rest)
+
+    with pytest.raises(ValueError):
+        await provider.get_equity()

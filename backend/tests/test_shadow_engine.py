@@ -100,6 +100,7 @@ class _FakeRiskRepo:
         self.outcomes: list[float] = []
         self.risk_events: list[tuple] = []
         self.exposure_calls: list[tuple] = []
+        self.sync_equity_calls: list[tuple] = []
 
     async def get_account_state(self, account_id):
         return self.account
@@ -109,6 +110,18 @@ class _FakeRiskRepo:
 
     async def set_exposure(self, account_id, open_positions_count, correlated_exposure_pct=0.0):
         self.exposure_calls.append((account_id, open_positions_count, correlated_exposure_pct))
+
+    async def sync_equity_from_exchange(self, account_id, real_equity):
+        self.sync_equity_calls.append((account_id, real_equity))
+        self.account = AccountState(
+            equity=real_equity, peak_equity=max(self.account.peak_equity, real_equity),
+            daily_starting_equity=self.account.daily_starting_equity,
+            daily_realized_pnl=self.account.daily_realized_pnl,
+            consecutive_losses=self.account.consecutive_losses,
+            open_positions_count=self.account.open_positions_count,
+            correlated_exposure_pct=self.account.correlated_exposure_pct,
+        )
+        return self.account
 
     async def record_trade_outcome(self, account_id, pnl):
         self.outcomes.append(pnl)
@@ -155,6 +168,10 @@ class _FakeExecutionProvider:
         self.bracket_error: Exception | None = None
         self.open_bracket_calls: list[tuple] = []
         self._next_id = 100
+        self.equity = 1234.56
+
+    async def get_equity(self):
+        return self.equity
 
     def set_order_status(self, order_id: int, status: str, avg_price: float = 0.0, update_time_ms: int = 1700000000000):
         self.order_statuses[order_id] = OrderResult(
@@ -236,6 +253,22 @@ def _engine(df, account=None, kill_switch_triggered=False):
     execution = _FakeExecutionProvider()
     engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, execution, _Settings())
     return engine, shadow_repo, risk_repo, kill_switch_repo, execution
+
+
+@pytest.mark.asyncio
+async def test_sync_equity_writes_the_executions_real_equity_into_risk_repo():
+    # Fase 17b: position sizing must use the exchange's real balance, not a
+    # locally-tracked number that can drift from it (found live: a demo
+    # account already showed real equity 988.46 vs. the locally-assumed
+    # 1000.0 default).
+    closes, volume = _consolidation_then_breakout()
+    df = _candles_df(closes, volume)
+    engine, _, risk_repo, _, execution = _engine(df)
+    execution.equity = 987.65
+
+    await engine.sync_equity("shadow")
+
+    assert risk_repo.sync_equity_calls[-1] == ("shadow", pytest.approx(987.65))
 
 
 @pytest.mark.asyncio
