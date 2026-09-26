@@ -144,6 +144,19 @@ class Settings(BaseSettings):
     momentum_trailing_activation_max_pct: float = 5.0
     momentum_trailing_callback_min_pct: float = 0.5
     momentum_trailing_callback_max_pct: float = 6.0
+    # Rejects a candidate whose recent move already spent this many ATRs
+    # of range - "already too tired to chase" (Fase 17k - see
+    # MomentumConfig's docstring for the real trade data behind these
+    # defaults). 0 disables the filter.
+    momentum_extension_lookback_bars: int = 8
+    momentum_extension_atr_multiple: float = 3.0
+    # Independent climax-volume check (Fase 17k - see MomentumConfig's
+    # docstring): rejects on an extreme volume z-score at entry (blow-off
+    # signature), even when the price-extension check alone wouldn't yet
+    # fire. 0.0 disables it (a real threshold of exactly 0 would reject
+    # almost every candidate, so it's a safe, unambiguous "off" sentinel -
+    # env vars can't express None cleanly).
+    momentum_climax_volume_zscore: float = 8.0
     # BingX's own Momentum scanner needs its OWN floor, not `momentum_min_quote_volume`
     # (Fase 17i) - found live 2026-09-25 that reusing Binance's $500M floor
     # unchanged left BingX's scanner structurally unable to find speculative

@@ -181,6 +181,41 @@ class MomentumTradingEngine:
             return {"action": "KILL_SWITCH_BLOCKED", "reasons": kill_state.reasons}
 
         snapshot = compute_snapshot(symbol, config.interval, df)
+
+        # Fase 17k: reject a candidate that already looks "tired" rather
+        # than near the start of its move - chasing an already-extended
+        # leg, not catching one early (see MomentumConfig's docstring for
+        # the real trade data both checks below were calibrated against).
+        # Checked before strategy evaluation: no confluence result changes
+        # whether a leg has already run too far to chase. Two independent
+        # signals, either one is disqualifying:
+        #   1. price extension: the recent move already spent several ATRs
+        #      of range.
+        #   2. climax volume: an extreme volume spike at entry, the
+        #      classic blow-off-top signature, catches cases the price
+        #      check alone might miss (a big move compressed into fewer
+        #      candles than extension_lookback_bars covers).
+        extended_reasons: list[str] = []
+        extension_ratio = None
+        lookback = config.extension_lookback_bars
+        if lookback > 0 and snapshot.atr_14 and len(df) > lookback:
+            recent_move = abs(float(df["close"].iloc[-1]) - float(df["close"].iloc[-1 - lookback]))
+            extension_ratio = round(recent_move / snapshot.atr_14, 2)
+            if extension_ratio > config.extension_atr_multiple:
+                extended_reasons.append("PRICE_EXTENDED")
+        if (
+            config.climax_volume_zscore is not None
+            and snapshot.volume_zscore_20 is not None
+            and snapshot.volume_zscore_20 > config.climax_volume_zscore
+        ):
+            extended_reasons.append("CLIMAX_VOLUME")
+        if extended_reasons:
+            await self.momentum_repo.set_cursor(account_id, symbol, config.interval, latest_closed["close_time"])
+            return {
+                "action": "ALREADY_EXTENDED", "reasons": extended_reasons, "extension_ratio": extension_ratio,
+                "volume_zscore": snapshot.volume_zscore_20,
+            }
+
         strategy_ids = await self._effective_strategy_ids(config.strategy_ids)
         signals = evaluate_all(snapshot, strategy_ids)
         confluence = combine_signals(signals, config.strategy_weights, config.confluence_threshold)

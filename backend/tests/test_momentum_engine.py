@@ -534,6 +534,65 @@ async def test_trailing_distances_scale_with_the_symbols_own_volatility():
 
 
 @pytest.mark.asyncio
+async def test_extension_filter_rejects_an_already_extended_candidate():
+    # Fase 17k regression: the user noticed real entries landing on legs
+    # that already "looked tired." Audited against real trade data: the
+    # only real winner entered at 2.45x ATR of recent move, every loser
+    # that chased an extended leg entered at 6.25x-10.78x. A near-zero
+    # extension_atr_multiple must reject even this test's normal breakout
+    # (which has SOME recent move by construction), proving the filter is
+    # wired in and fires before any confluence result can override it.
+    closes, volume = _consolidation_then_breakout()
+    klines = _klines(closes, volume)
+    engine, momentum_repo, *_ = _engine(klines)
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210, extension_atr_multiple=0.01)
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+
+    assert result["action"] == "ALREADY_EXTENDED"
+    assert "PRICE_EXTENDED" in result["reasons"]
+    assert result["extension_ratio"] > config.extension_atr_multiple
+    assert momentum_repo.positions == {}
+    # the cursor must still advance - an already-extended candle must
+    # never be reprocessed forever just because it was filtered here
+    assert momentum_repo.cursors[(config.account_id, "ETHUSDT", config.interval)] is not None
+
+
+@pytest.mark.asyncio
+async def test_climax_volume_filter_rejects_independently_of_price_extension():
+    # Fase 17k: the same audit found the worst-extended losers also carried
+    # an extreme volume z-score at entry (climax/blow-off signature) - a
+    # second, independent check, since a volume climax can happen before
+    # the price-extension math catches up. Disable the price check
+    # entirely so only the volume path can fire.
+    closes, volume = _consolidation_then_breakout()
+    klines = _klines(closes, volume)
+    engine, momentum_repo, *_ = _engine(klines)
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210,
+                             extension_lookback_bars=0, climax_volume_zscore=2.0)
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+
+    assert result["action"] == "ALREADY_EXTENDED"
+    assert result["reasons"] == ["CLIMAX_VOLUME"]
+    assert result["volume_zscore"] > config.climax_volume_zscore
+    assert momentum_repo.positions == {}
+
+
+@pytest.mark.asyncio
+async def test_extension_filter_disabled_when_lookback_is_zero():
+    closes, volume = _consolidation_then_breakout()
+    klines = _klines(closes, volume)
+    engine, momentum_repo, *_ = _engine(klines)
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210,
+                             extension_atr_multiple=0.01, extension_lookback_bars=0)
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+
+    assert result["action"] == "ENTRY_OPENED"
+
+
+@pytest.mark.asyncio
 async def test_bracket_failure_does_not_persist_a_position():
     closes, volume = _consolidation_then_breakout()
     klines = _klines(closes, volume)

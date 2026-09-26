@@ -37,6 +37,43 @@ behavior while adapting correctly at both volatility extremes.
 for later analysis - was a high-momentum entry more or less reliable than a
 low-momentum one? Not answerable yet with zero real trades, but the field
 exists so that question can be asked later without a schema change.
+
+Fase 17k: the user noticed real entries kept landing on legs that already
+"looked tired" - buying near the top of a pump instead of near its start.
+Audited the 8 most recent real Momentum trades (Binance + BingX) against
+each symbol's own ATR14 and found a clean, real pattern: the ONLY winner
+(RAREUSDT, +$3.92) entered after a move of 2.45x its own ATR14 over the
+prior 2h (8 bars @ 15m); every trade that entered deeper into an already-
+extended move lost - ORBIOUSDT at 6.25x ATR, RAREUSDT at 8.65x and again
+at 10.78x. The other losers (SIUSDT, ARKUSDT, USEPAIDUSDT, AEROUSDT) all
+had LOW extension (0.4x-1.5x) - their losses were bad signals, a different
+failure mode this filter isn't meant to fix. Root cause: `rank_by_momentum`
+scores candidates by 24h price change (backward-looking - rewards whoever
+already moved the most) and the strategy signals that confirm entry
+(breakout, trend-pullback) are themselves lagging technical confirmations
+- both layers compound to enter well after a move has started, not near
+its beginning. `extension_atr_multiple` (default 3.0, validated against
+the real data above - sits cleanly between the 2.45x winner and the 6.25x
+first loser) rejects a candidate whose last `extension_lookback_bars`
+(default 8, ~2h @ 15m) move already exceeds that many ATRs - "this leg
+already ran too far to chase," independent of what the strategy signals
+say. Does not touch Paper/Shadow (fixed symbol list, different profile);
+scoped to Momentum only, where the user's complaint was specifically
+about chasing scanner-picked altcoin legs.
+
+The same audit checked volume for a second, independent confirmation:
+the two worst-extended losers (RAREUSDT at 8.65x/10.78x ATR) also carried
+an extreme volume z-score at entry (+33.6 and +12.1, i.e. 12-34 standard
+deviations above their recent baseline) - a classic climax/blow-off
+pattern, volume spiking as a move exhausts rather than as it begins. The
+winner and the other, non-extension-related losers all sat in a much
+calmer -1.4 to +1.6 band. `climax_volume_zscore` (default 8.0, chosen
+with a wide margin below the 12.1 bad cases and above the 1.6 normal
+ones) rejects on climax volume even for a candidate that wouldn't yet
+trip the pure price-extension check - the two signals catch overlapping
+but not identical cases (a huge volume spike compressed into fewer
+candles could climax before the ATR-multiple math flags it). Set to
+`None` to disable independently of `extension_lookback_bars`.
 """
 from __future__ import annotations
 
@@ -66,6 +103,15 @@ class MomentumConfig:
     trailing_activation_max_pct: float = 5.0
     trailing_callback_min_pct: float = 0.5
     trailing_callback_max_pct: float = 6.0
+    # Rejects a candidate whose recent move already exceeds this many ATRs
+    # over the last `extension_lookback_bars` candles (Fase 17k - see
+    # module docstring) - "already too tired to chase." 0 disables the
+    # filter entirely.
+    extension_lookback_bars: int = 8
+    extension_atr_multiple: float = 3.0
+    # Independent climax-volume check (Fase 17k - see module docstring).
+    # None disables it.
+    climax_volume_zscore: float | None = 8.0
     leverage: int = 3
     warmup_bars: int = 210
     candle_limit: int = 500

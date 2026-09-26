@@ -90,6 +90,9 @@ async def _main() -> None:
         trailing_activation_max_pct=settings.momentum_trailing_activation_max_pct,
         trailing_callback_min_pct=settings.momentum_trailing_callback_min_pct,
         trailing_callback_max_pct=settings.momentum_trailing_callback_max_pct,
+        extension_lookback_bars=settings.momentum_extension_lookback_bars,
+        extension_atr_multiple=settings.momentum_extension_atr_multiple,
+        climax_volume_zscore=settings.momentum_climax_volume_zscore or None,
     )
 
     try:
