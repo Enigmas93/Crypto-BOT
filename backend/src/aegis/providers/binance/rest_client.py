@@ -354,9 +354,18 @@ class BinanceFuturesRestClient:
         `place_stop_market_order`. Never auto-retried."""
         if not 0.1 <= callback_rate_pct <= 10:
             raise ValueError(f"callback_rate_pct must be in [0.1, 10], got {callback_rate_pct}")
+        # Binance rejects a callbackRate with more than 1 decimal place
+        # (code -2007 "Invalid callBack rate") - found live 2026-09-26
+        # after Fase 17j made this an ATR-derived float (e.g.
+        # 2.7430914930998274) instead of a clean, hand-set config value:
+        # every real Momentum entry since then had its bracket setup fail
+        # and get flattened right after filling. Round to the precision
+        # Binance actually accepts, here at the API boundary so every
+        # caller is protected, not just the one that happened to trigger it.
+        callback_rate_pct = round(callback_rate_pct, 1)
         params: dict[str, Any] = {
             "algoType": "CONDITIONAL", "symbol": symbol, "side": side, "type": "TRAILING_STOP_MARKET",
-            "callbackRate": str(callback_rate_pct), "quantity": self._fmt(quantity), "reduceOnly": "true",
+            "callbackRate": f"{callback_rate_pct:.1f}", "quantity": self._fmt(quantity), "reduceOnly": "true",
             "workingType": "MARK_PRICE", "clientAlgoId": client_order_id or f"aegis-{uuid.uuid4().hex[:20]}",
         }
         if activation_price is not None:

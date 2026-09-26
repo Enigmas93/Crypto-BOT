@@ -195,6 +195,30 @@ async def test_place_trailing_stop_order_rejects_out_of_range_callback_rate():
 
 
 @pytest.mark.asyncio
+async def test_place_trailing_stop_order_rounds_callback_rate_to_one_decimal():
+    # Real production bug (2026-09-26): once callback_rate_pct became an
+    # ATR-derived float (e.g. 2.7430914930998274) instead of a clean
+    # hand-set value, Binance rejected every single one with code -2007
+    # "Invalid callBack rate" - every Momentum entry since then had its
+    # bracket setup fail and get flattened right after filling. Binance
+    # only accepts 1 decimal place for this parameter.
+    client = _client()
+    captured: dict = {}
+
+    async def _fake_signed_write(method, path, params):
+        captured.update(params)
+        return {"algoId": 1, "clientAlgoId": "x", "orderType": "TRAILING_STOP_MARKET", "symbol": "BTCUSDT",
+                "side": "SELL", "quantity": "0.01", "algoStatus": "WORKING", "triggerPrice": "0",
+                "actualPrice": "0", "actualQty": "0", "reduceOnly": True, "closePosition": False,
+                "updateTime": 1700000000000}
+
+    client._signed_write = _fake_signed_write
+    await client.place_trailing_stop_order("BTCUSDT", "SELL", 2.7430914930998274, 0.01)
+
+    assert captured["callbackRate"] == "2.7"
+
+
+@pytest.mark.asyncio
 async def test_set_leverage_rejects_out_of_range_values():
     client = _client()
     with pytest.raises(ValueError):
