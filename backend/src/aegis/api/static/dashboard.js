@@ -123,6 +123,11 @@ let cache = {
   killSwitchEvents: {}, // account_id -> events[]
   tradesByAccount: {}, // account_id -> trades[]
   bingxSettings: { mode: "demo", credentials_configured: false, updated_at: null },
+  // Real, unscaled total account balance straight from BingX - NOT
+  // account.equity from /overview, which is each engine's own
+  // capital_allocation slice (Shadow BingX's 60% / Momentum BingX's 40%
+  // of the SAME real balance). See renderExchangeBanner.
+  bingxRealEquity: { demo: null, live: null },
   strategySettings: { strategies: [] },
   capitalAllocation: { allocations: {} },
   newsFull: { items: [] },
@@ -251,8 +256,19 @@ function renderExchangeBanner(exchange, account) {
   const dd = account.drawdown_pct;
   const ddClass = dd > 0.075 ? "down" : dd > 0.05 ? "" : "up";
   const risky = account.kill_switch.is_triggered;
+  // Fase 17k+1: for BingX, "Patrimônio" is the REAL total account balance
+  // (both strategies combined - Shadow BingX + Momentum BingX share ONE
+  // real BingX balance, split by capital_allocation_pct), not just the
+  // primary/Shadow account's own 60% slice. Binance has no such split
+  // (each account is genuinely independent), so it keeps using
+  // account.equity as before. Falls back to account.equity if the real
+  // number isn't available yet (no credentials, or a transient exchange
+  // read failure) rather than showing nothing.
+  const patrimonio = exchange === "bingx"
+    ? (cache.bingxRealEquity[activeBingxMode()] ?? account.equity)
+    : account.equity;
   strip.innerHTML = `
-    <div class="kpi-tile accent"><div class="lbl">Patrimônio</div><div class="val">${fmtMoney(account.equity)}</div></div>
+    <div class="kpi-tile accent"><div class="lbl">Patrimônio${exchange === "bingx" ? " (conta total)" : ""}</div><div class="val">${fmtMoney(patrimonio)}</div></div>
     <div class="kpi-tile"><div class="lbl">PnL do dia</div><div class="val ${account.daily_realized_pnl >= 0 ? "up" : "down"}">${fmtMoney(account.daily_realized_pnl)}</div></div>
     <div class="kpi-tile"><div class="lbl">Drawdown</div><div class="val ${ddClass}">${fmtPct(dd)}</div></div>
     <div class="kpi-tile"><div class="lbl">Posições abertas</div><div class="val">${account.open_positions_count}</div></div>
@@ -953,7 +969,7 @@ function renderNewsTab() {
 // -- data refresh --------------------------------------------------------
 async function refreshData() {
   const accountIds = Object.keys(ACCOUNTS);
-  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health, macro, derivatives, liquidations, regime, bingxSettings, strategySettings, capitalAllocation, newsFull] = await Promise.all([
+  const [overview, positions, journal, momentumScan, newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health, macro, derivatives, liquidations, regime, bingxSettings, strategySettings, capitalAllocation, newsFull, bingxRealEquity] = await Promise.all([
     getJSON("/api/overview"),
     getJSON("/api/positions"),
     getJSON("/api/journal?limit=50"),
@@ -972,6 +988,7 @@ async function refreshData() {
     getJSON("/api/settings/strategies").catch(() => cache.strategySettings),
     getJSON("/api/settings/capital-allocation").catch(() => cache.capitalAllocation),
     getJSON("/api/news/recent?limit=150").catch(() => cache.newsFull),
+    getJSON("/api/bingx/real-equity").catch(() => cache.bingxRealEquity),
   ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
@@ -991,6 +1008,7 @@ async function refreshData() {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health,
     macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings, strategySettings, capitalAllocation, newsFull,
+    bingxRealEquity,
     tradesByAccount: cache.tradesByAccount,
   };
 }

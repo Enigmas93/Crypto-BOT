@@ -52,6 +52,7 @@ from aegis.db.capital_allocation_repository import CapitalAllocationRepository
 from aegis.db.shadow_repository import ShadowRepository
 from aegis.db.strategy_settings_repository import StrategySettingsRepository
 from aegis.db.walk_forward_repository import WalkForwardRepository
+from aegis.execution.bingx_provider import BingXExecutionProvider
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrderError, BingXRestError
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceOrderError, BinanceRestError
 from aegis.regime.service import classify_regime
@@ -541,6 +542,42 @@ async def get_bingx_settings(bingx_account_repo: BingxAccountRepository = Depend
         "credentials_configured": state.credentials_configured,
         "updated_at": state.updated_at,
     }
+
+
+@router.get("/bingx/real-equity")
+async def get_bingx_real_equity(bingx_account_repo: BingxAccountRepository = Depends(get_bingx_account_repo)) -> dict:
+    """The REAL, total BingX balance (wallet + unrealized PnL) for both
+    demo and live, straight from the exchange - NOT the per-strategy
+    `risk_account_state.equity` the rest of the dashboard reads, which is
+    deliberately scaled down by each engine's capital_allocation_pct
+    (Fase 17g: Shadow BingX and Momentum BingX share one real account
+    balance, so each engine sizes positions off its own slice only).
+    Found live 2026-09-26: the dashboard's top-level BingX "Patrimônio"
+    tile was showing Shadow's 60% slice, which never matched what the user
+    actually sees on the exchange itself - this endpoint exists so the
+    dashboard can show the whole account's real number there, independent
+    of how it happens to be split between strategies. Either value comes
+    back `None` (never a guessed number) if credentials aren't configured
+    or that mode's balance can't be reached right now."""
+    state = await bingx_account_repo.get_settings()
+    if not state.credentials_configured:
+        return {"demo": None, "live": None}
+    demo_rest, live_rest = await _bingx_rest_clients(bingx_account_repo)
+    try:
+        demo_equity: float | None = None
+        live_equity: float | None = None
+        try:
+            demo_equity = await BingXExecutionProvider(demo_rest).get_equity()
+        except (BingXRestError, BingXOrderError):
+            pass
+        try:
+            live_equity = await BingXExecutionProvider(live_rest).get_equity()
+        except (BingXRestError, BingXOrderError):
+            pass
+        return {"demo": demo_equity, "live": live_equity}
+    finally:
+        await demo_rest.aclose()
+        await live_rest.aclose()
 
 
 @router.post("/settings/bingx/credentials")

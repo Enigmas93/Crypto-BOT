@@ -430,6 +430,23 @@ async def test_get_bingx_settings_returns_mode_and_configured_flag(client):
 
 
 @pytest.mark.asyncio
+async def test_get_bingx_real_equity_returns_demo_and_live_keys(client):
+    # Fase 17k+1: the dashboard's top-level BingX "Patrimônio" needs the
+    # REAL, unscaled account balance (this endpoint), not the per-strategy
+    # risk_account_state.equity (which is deliberately scaled by each
+    # engine's capital_allocation_pct). Doesn't assert real numbers -
+    # whether credentials happen to be configured in this environment is
+    # incidental - only that the shape is always {"demo": ..., "live": ...}
+    # with each value either a real number or None, never missing/crashed.
+    resp = await client.get("/api/bingx/real-equity")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body.keys()) == {"demo", "live"}
+    for value in body.values():
+        assert value is None or isinstance(value, (int, float))
+
+
+@pytest.mark.asyncio
 async def test_save_bingx_credentials_rejects_blank_key(client):
     resp = await client.post("/api/settings/bingx/credentials", json={"api_key": "  ", "api_secret": "x"})
     assert resp.status_code == 400
