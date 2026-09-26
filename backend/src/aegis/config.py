@@ -135,8 +135,15 @@ class Settings(BaseSettings):
     momentum_top_n: int = 5
     momentum_scan_interval_seconds: float = 900.0  # how often to re-rank candidates
     momentum_poll_interval_seconds: float = 30.0  # how often to check open positions / act on candidates
-    momentum_trailing_callback_rate_pct: float = 2.0
-    momentum_trailing_activation_pct: float = 1.5  # profit % before the trailing leg arms itself
+    # Trailing activation/callback scale with each candidate's own ATR%
+    # (Fase 17j - see MomentumConfig's docstring) instead of one fixed
+    # percentage for every symbol on every exchange.
+    momentum_trailing_activation_atr_multiple: float = 1.0
+    momentum_trailing_callback_atr_multiple: float = 1.33
+    momentum_trailing_activation_min_pct: float = 0.5
+    momentum_trailing_activation_max_pct: float = 5.0
+    momentum_trailing_callback_min_pct: float = 0.5
+    momentum_trailing_callback_max_pct: float = 6.0
     # BingX's own Momentum scanner needs its OWN floor, not `momentum_min_quote_volume`
     # (Fase 17i) - found live 2026-09-25 that reusing Binance's $500M floor
     # unchanged left BingX's scanner structurally unable to find speculative

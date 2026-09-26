@@ -38,7 +38,8 @@ def _consolidation_then_breakout(n: int = 261, consolidation_len: int = 260, see
 
 
 def _klines(closes: np.ndarray, volume: np.ndarray, symbol="ETHUSDT",
-            start: datetime = datetime(2026, 1, 1, tzinfo=UTC), interval_minutes: int = 60) -> list[Kline]:
+            start: datetime = datetime(2026, 1, 1, tzinfo=UTC), interval_minutes: int = 60,
+            candle_range: float = 0.3) -> list[Kline]:
     klines = []
     for i, (c, v) in enumerate(zip(closes, volume)):
         open_time = start + timedelta(minutes=interval_minutes * i)
@@ -46,7 +47,8 @@ def _klines(closes: np.ndarray, volume: np.ndarray, symbol="ETHUSDT",
         prev_close = closes[i - 1] if i > 0 else c
         klines.append(Kline(
             symbol=symbol, interval="1h", open_time_ms=int(open_time.timestamp() * 1000),
-            close_time_ms=int(close_time.timestamp() * 1000), open=prev_close, high=c + 0.3, low=c - 0.3,
+            close_time_ms=int(close_time.timestamp() * 1000), open=prev_close,
+            high=c + candle_range, low=c - candle_range,
             close=c, volume=v, quote_volume=c * v, trades=50, taker_buy_base_volume=v * 0.5,
             taker_buy_quote_volume=c * v * 0.5, is_closed=True,
         ))
@@ -478,7 +480,11 @@ async def test_entry_opened_persists_position_with_stop_and_trailing_order_ids()
     assert position.momentum_score == 15.0
     assert len(execution.open_trailing_calls) == 1
     _, side, _, stop_price, callback_rate, leverage, activation_price = execution.open_trailing_calls[0]
-    assert callback_rate == config.trailing_callback_rate_pct
+    # Fase 17j: callback_rate is derived from this symbol's own ATR%, not a
+    # fixed config value anymore - just check it landed inside the
+    # configured band (see test_trailing_distances_scale_with_the_symbols_
+    # own_volatility below for the actual scaling behavior).
+    assert config.trailing_callback_min_pct <= callback_rate <= config.trailing_callback_max_pct
     # regression: leverage must be sent to the exchange, not just assumed
     assert leverage == config.leverage
     # the trailing leg must only arm once price has moved in profit - never
@@ -494,6 +500,37 @@ async def test_entry_opened_persists_position_with_stop_and_trailing_order_ids()
     assert abs(ticks - round(ticks)) < 1e-6
     activation_ticks = activation_price / _rules().tick_size
     assert abs(activation_ticks - round(activation_ticks)) < 1e-6
+
+
+@pytest.mark.asyncio
+async def test_trailing_distances_scale_with_the_symbols_own_volatility():
+    # Fase 17j regression: found live that BingX's own micro-cap momentum
+    # candidates (e.g. SIUSDT, USEPAIDUSDT) run a 15m ATR% 10-50x a major
+    # like BTC's - a fixed activation/callback percentage arms and closes
+    # almost instantly on that kind of noise, never giving a real move room
+    # to develop. Two otherwise-identical breakouts, one with a tight
+    # candle range (low ATR%) and one with a wide one (high ATR%), must
+    # produce a meaningfully wider trailing distance for the volatile one.
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210)
+
+    closes, volume = _consolidation_then_breakout()
+    tight_klines = _klines(closes, volume, candle_range=0.3)
+    tight_engine, _, _, _, tight_execution = _engine(tight_klines)
+    tight_result = await tight_engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+    assert tight_result["action"] == "ENTRY_OPENED"
+    _, _, _, _, tight_callback, _, _ = tight_execution.open_trailing_calls[0]
+
+    wide_klines = _klines(closes, volume, candle_range=1.0)
+    wide_engine, _, _, _, wide_execution = _engine(wide_klines)
+    wide_result = await wide_engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+    assert wide_result["action"] == "ENTRY_OPENED"
+    _, _, _, _, wide_callback, _, _ = wide_execution.open_trailing_calls[0]
+
+    # more than double the ATR (0.3 -> 1.0 candle range) must produce a
+    # meaningfully wider trailing distance, not the same fixed number
+    assert wide_callback > tight_callback * 1.5
+    assert config.trailing_callback_min_pct <= tight_callback <= config.trailing_callback_max_pct
+    assert config.trailing_callback_min_pct <= wide_callback <= config.trailing_callback_max_pct
 
 
 @pytest.mark.asyncio

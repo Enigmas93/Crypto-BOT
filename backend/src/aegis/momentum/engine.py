@@ -196,9 +196,21 @@ class MomentumTradingEngine:
             return {"action": "NO_STOP_AVAILABLE", "confluence_score": confluence.confluence_score}
         stop_price = round_down_to_step(raw_stop_price, symbol_rules.tick_size)
 
-        activation_multiplier = (
-            1 + config.trailing_activation_pct / 100 if side == "LONG" else 1 - config.trailing_activation_pct / 100
+        # Fase 17j: activation/callback distances scale with THIS symbol's
+        # own ATR%, not one fixed percentage for every candidate - see
+        # MomentumConfig's docstring for why (a fixed 1.5%/2.0% arms/closes
+        # almost instantly on BingX's wilder micro-caps, on nothing more
+        # than ordinary noise).
+        atr_pct = (snapshot.atr_14 / reference_price * 100) if snapshot.atr_14 else 0.0
+        activation_pct = min(
+            max(atr_pct * config.trailing_activation_atr_multiple, config.trailing_activation_min_pct),
+            config.trailing_activation_max_pct,
         )
+        callback_pct = min(
+            max(atr_pct * config.trailing_callback_atr_multiple, config.trailing_callback_min_pct),
+            config.trailing_callback_max_pct,
+        )
+        activation_multiplier = 1 + activation_pct / 100 if side == "LONG" else 1 - activation_pct / 100
         activation_price = round_down_to_step(reference_price * activation_multiplier, symbol_rules.tick_size)
 
         # No take_profit_price: this engine's profit-taking is the trailing
@@ -218,7 +230,7 @@ class MomentumTradingEngine:
         quantity = risk_decision.position_size.quantity
         try:
             brackets = await self.execution.open_trailing_bracket_position(
-                symbol, side, quantity, stop_price, config.trailing_callback_rate_pct, config.leverage,
+                symbol, side, quantity, stop_price, callback_pct, config.leverage,
                 activation_price=activation_price,
             )
         except BracketOpenError as exc:
