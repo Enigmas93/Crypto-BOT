@@ -38,7 +38,10 @@ def test_defaults_match_env_example():
     settings = _settings()
     assert settings.core_symbols == ["BTCUSDT", "ETHUSDT"]
     assert settings.speculative_symbol_list == ["SOLUSDT", "XRPUSDT", "DOGEUSDT", "1000PEPEUSDT", "NEARUSDT"]
-    assert settings.speculative_interval == "15m"
+    assert settings.speculative_interval == "1h"
+    assert settings.momentum_interval == "1h"
+    assert (settings.strategy_stop_atr_multiple, settings.strategy_take_profit_r_multiple) == (2.0, 3.0)
+    assert settings.momentum_exit_mode == "BRACKET"
 
 
 def test_event_risk_coin_slug_list_parses_and_lowercases():

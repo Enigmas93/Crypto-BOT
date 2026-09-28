@@ -131,7 +131,10 @@ let cache = {
   strategySettings: { strategies: [] },
   capitalAllocation: { allocations: {} },
   newsFull: { items: [] },
+  intel: { briefs: [], news: [], pulse: [], reviews: [], listings: [], research: [], active_config: null },
+  excursions: { closed: [], open: [] },
 };
+let evidenceSource = "BINGX 1h";
 
 // -- tab / exchange switching --------------------------------------------
 function setActiveTab(tab) {
@@ -596,7 +599,7 @@ function renderOrdersTab() {
   } else {
     rows = (cache.tradesByAccount[ordersFilter] || []).map((t) => ({ account: ordersFilter, ...t }));
   }
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="7" class="empty">Nenhum trade ainda</td></tr>`; return; }
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="8" class="empty">Nenhum trade ainda</td></tr>`; return; }
   tbody.innerHTML = rows.map((e) => `
     <tr>
       <td>${ACCOUNTS[e.account] ? ACCOUNTS[e.account].label : e.account}</td>
@@ -605,6 +608,7 @@ function renderOrdersTab() {
       <td class="num">${e.exit_reason}</td>
       <td class="num ${e.net_pnl >= 0 ? "up" : "down"}">${fmtMoney(e.net_pnl)}</td>
       <td class="num">${e.r_multiple.toFixed(2)}</td>
+      <td class="num" title="Máximo a favor antes de sair">${e.mfe_r === null || e.mfe_r === undefined ? "—" : `+${Number(e.mfe_r).toFixed(2)}R`}</td>
       <td class="num">${fmtTime(e.closed_at)}</td>
     </tr>`).join("");
 }
@@ -935,6 +939,164 @@ function renderAll() {
   renderOrdersTab();
   renderNewsTab();
   renderRiskLogsTab();
+  renderIntelTab();
+}
+
+// -- inteligência tab (Fase 18) -------------------------------------------------
+const fmtR = (v, d = 3) => (v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(d)}R`);
+const sentimentPillAi = (s) => (
+  s === "positive" ? '<span class="pill long">POSITIVO</span>'
+  : s === "negative" ? '<span class="pill short">NEGATIVO</span>'
+  : s === "neutral" ? '<span class="pill neutral">NEUTRO</span>' : '<span class="pill neutral">—</span>'
+);
+const VERDICT_LABEL = {
+  GOOD_TRADE: ["ok", "BOM TRADE"], CORRECT_LOSS: ["ok", "PERDA CORRETA"], UNLUCKY: ["warn", "AZAR"],
+  BAD_ENTRY: ["crit", "ENTRADA RUIM"], BAD_EXIT: ["crit", "SAÍDA RUIM"],
+};
+
+function setEvidenceSource(src) { evidenceSource = src; renderIntelTab(); }
+window.setEvidenceSource = setEvidenceSource;
+
+function renderIntelTab() {
+  const intel = cache.intel || {};
+  const cfg = intel.active_config;
+  const kpis = el("intel-kpis");
+  if (kpis) {
+    const newsAi = (intel.news || []).filter((n) => n.ai_sentiment).length;
+    const tiles = [
+      ["IA NVIDIA", intel.ai_enabled ? '<span class="up">ATIVA</span>' : '<span class="down">SEM CHAVE</span>'],
+      ["Modelo principal", `<span style="font-size:12px">${escapeHtml((intel.models || [])[0] || "—")}</span>`],
+      ["Shadow", cfg ? `${cfg.shadow.interval} · ${cfg.shadow.stop_atr} ATR · ${cfg.shadow.take_profit_r}R` : "—"],
+      ["Momentum", cfg ? `${cfg.momentum.interval} · ${cfg.momentum.exit_mode === "BRACKET" ? `alvo ${cfg.momentum.take_profit_r}R` : "trailing"}` : "—"],
+      ["Notícias lidas (IA)", newsAi],
+      ["Listagens (radar)", (intel.listings || []).length],
+    ];
+    kpis.innerHTML = tiles.map(([l, v], i) => `<div class="kpi-tile ${i === 0 ? "accent" : ""}"><div class="lbl">${l}</div><div class="val" style="font-size:15px">${v}</div></div>`).join("");
+  }
+
+  // evidence
+  const research = intel.research || [];
+  const sources = [...new Set(research.map((r) => `${r.data_source} ${r.interval}`))].sort();
+  if (sources.length && !sources.includes(evidenceSource)) evidenceSource = sources[0];
+  const chips = el("intel-evidence-chips");
+  if (chips) {
+    chips.innerHTML = sources.map((s) => `<span class="chip ${s === evidenceSource ? "active" : ""}" onclick="setEvidenceSource('${s}')">${s}</span>`).join("");
+  }
+  const note = el("intel-evidence-source-note");
+  if (note) note.textContent = research.length ? `gerado em ${fmtTime(research[0].created_at)}` : "";
+  const evBody = el("intel-evidence-table");
+  if (evBody) {
+    const rows = research.filter((r) => `${r.data_source} ${r.interval}` === evidenceSource)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    evBody.innerHTML = rows.map((r) => {
+      const m = r.metrics || {};
+      const all = m.all || {}, oos = m.out_of_sample || {};
+      const active = r.name.includes("(ativ");
+      const v = oos.avg_r ?? 0;
+      const width = Math.min(50, Math.abs(v) / 0.2 * 50);
+      const halves = Object.entries(m.by_half_year || {}).map(([h, x]) =>
+        `<span title="${h}: ${fmtR(x)}" style="background:${x >= 0 ? "var(--green)" : "var(--red)"};opacity:${Math.min(1, 0.35 + Math.abs(x) * 6)}"></span>`).join("");
+      return `<tr class="${active ? "active-config" : ""}">
+        <td class="scn">${escapeHtml(r.name)} ${active ? '<span class="pill open">ATIVA</span>' : ""}</td>
+        <td class="num">${all.trades ?? "—"}</td>
+        <td class="num">${all.win_rate !== undefined ? `${all.win_rate}%` : "—"}</td>
+        <td class="num ${all.avg_r >= 0 ? "up" : "down"}">${fmtR(all.avg_r)}</td>
+        <td class="num ${oos.avg_r >= 0 ? "up" : "down"}">${fmtR(oos.avg_r)}</td>
+        <td><div class="ev-bar"><div class="zero"></div><div class="fill ${v >= 0 ? "pos" : "neg"}" style="width:${width}%"></div></div></td>
+        <td class="num">${all.profit_factor ?? "—"}</td>
+        <td class="num">${m.symbols_positive ?? "—"}/${m.symbols ?? "—"}</td>
+        <td><div class="halves">${halves}</div></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="9" class="empty">Rode scripts/run_strategy_research.py para gerar a evidência</td></tr>`;
+  }
+
+  // briefs
+  const briefs = el("intel-briefs");
+  if (briefs) {
+    const list = (intel.briefs || []).slice().sort((a, b) => a.subject.localeCompare(b.subject));
+    briefs.innerHTML = list.map((b) => {
+      const p = b.payload || {};
+      const color = p.bias === "LONG" ? "var(--green)" : p.bias === "SHORT" ? "var(--red)" : "var(--text-faint)";
+      const riskPill = p.risk_level === "HIGH" ? "crit" : p.risk_level === "LOW" ? "ok" : "warn";
+      return `<div class="brief-card ${p.bias}">
+        <div class="bhead"><div class="bsym">${escapeHtml(b.subject)}</div>
+          <span class="pill ${p.bias === "LONG" ? "long" : p.bias === "SHORT" ? "short" : "neutral"}">${p.bias}</span>
+          <span class="pill ${riskPill}">RISCO ${p.risk_level}</span></div>
+        <div><div class="bmeta">CONVICÇÃO ${p.conviction ?? 0}/100</div>
+          <div class="conviction"><div style="width:${p.conviction ?? 0}%;background:${color}"></div></div></div>
+        <div class="bsummary">${escapeHtml(p.summary_pt || "")}</div>
+        ${(p.key_points || []).length ? `<ul>${p.key_points.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>` : ""}
+        <div class="bfoot"><span>Sistema: ${p.system_decision || "—"} · preço ${fmtNum(p.price)}</span><span>${fmtTime(b.created_at)}</span></div>
+      </div>`;
+    }).join("") || `<div class="card empty">Nenhum briefing ainda — o motor de IA escreve um por ativo a cada hora</div>`;
+  }
+
+  // news
+  const newsBody = el("intel-news");
+  if (newsBody) {
+    newsBody.innerHTML = (intel.news || []).map((n) => `<tr>
+      <td class="num" style="white-space:nowrap">${fmtTime(n.published_at)}</td>
+      <td>${escapeHtml(n.title)}${n.summary_pt ? `<div class="news-summary">${escapeHtml(n.summary_pt)}</div>` : ""}
+        ${(n.ai_assets || []).length ? `<div class="news-summary">${n.ai_assets.join(" · ")}</div>` : ""}</td>
+      <td>${sentimentPillAi(n.ai_sentiment)}</td>
+      <td class="num">${n.ai_magnitude ?? "—"}</td>
+      <td class="num" style="font-size:10.5px">${n.event_type || "—"}</td>
+      <td>${sentimentPillAi(n.keyword_sentiment)}</td></tr>`).join("")
+      || `<tr><td colspan="6" class="empty">Sem notícias</td></tr>`;
+  }
+  const pulseBody = el("intel-pulse");
+  if (pulseBody) {
+    pulseBody.innerHTML = (intel.pulse || []).map((p) => `<tr><td class="num">${escapeHtml(p.asset)}</td>
+      <td class="num">${p.items}</td><td class="num ${p.score > 0 ? "up" : p.score < 0 ? "down" : ""}">${p.score > 0 ? "+" : ""}${p.score}</td>
+      <td class="num">${p.max_magnitude}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">Sem dados da IA ainda</td></tr>`;
+  }
+
+  // listings
+  const listBody = el("intel-listings");
+  if (listBody) {
+    listBody.innerHTML = (intel.listings || []).map((l) => `<tr>
+      <td class="num" style="white-space:nowrap">${fmtTime(l.announced_at)}</td>
+      <td class="num" style="font-size:10.5px">${l.source}</td>
+      <td class="num"><b>${escapeHtml(l.ticker)}</b><div class="news-summary">${escapeHtml(l.title)}</div></td>
+      <td>${l.bingx_symbol ? `<span class="pill ok">${l.bingx_symbol}</span>` : '<span class="pill neutral">NÃO LISTADO</span>'}</td>
+      <td class="num">${l.price_at_detection ? fmtNum(l.price_at_detection, 6) : "—"}</td></tr>`).join("")
+      || `<tr><td colspan="5" class="empty">Nenhuma listagem nos últimos 3 dias</td></tr>`;
+  }
+
+  // excursions
+  const ex = cache.excursions || { closed: [], open: [] };
+  const exBody = el("intel-excursions");
+  if (exBody) {
+    exBody.innerHTML = (ex.closed || []).map((r) => `<tr>
+      <td>${ACCOUNTS[r.account_id] ? ACCOUNTS[r.account_id].label : r.account_id}</td>
+      <td class="num">${r.trades}</td><td class="num">${r.losers}</td>
+      <td class="num">${r.losers_green_05r} (${r.losers ? Math.round(100 * r.losers_green_05r / r.losers) : 0}%)</td>
+      <td class="num">${fmtR(r.avg_mfe_r, 2)}</td><td class="num ${r.avg_result_r >= 0 ? "up" : "down"}">${fmtR(r.avg_result_r, 2)}</td></tr>`).join("")
+      || `<tr><td colspan="6" class="empty">Ainda sem trades fechados com MFE registrado</td></tr>`;
+  }
+  const openBody = el("intel-open-excursions");
+  if (openBody) {
+    openBody.innerHTML = (ex.open || []).map((p) => `<tr>
+      <td class="num">${p.symbol} <span class="news-summary">${ACCOUNTS[p.account_id] ? ACCOUNTS[p.account_id].label : p.account_id}</span></td>
+      <td><span class="pill ${p.side === "LONG" ? "long" : "short"}">${p.side}</span></td>
+      <td class="num up">${fmtR(p.mfe_r, 2)}</td><td class="num down">${fmtR(p.mae_r === null ? null : -p.mae_r, 2)}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty">Nenhuma posição aberta</td></tr>`;
+  }
+
+  // reviews
+  const revBody = el("intel-reviews");
+  if (revBody) {
+    revBody.innerHTML = (intel.reviews || []).map((r) => {
+      const p = r.payload || {};
+      const [cls, label] = VERDICT_LABEL[p.verdict] || ["neutral", p.verdict || "—"];
+      return `<tr><td class="num" style="white-space:nowrap">${fmtTime(r.created_at)}</td>
+        <td>${ACCOUNTS[p.account_id] ? ACCOUNTS[p.account_id].label : escapeHtml(p.account_id || "")}</td>
+        <td class="num">${escapeHtml(p.symbol || "")} <span class="pill ${p.side === "LONG" ? "long" : "short"}">${p.side || ""}</span></td>
+        <td class="num ${p.r_multiple >= 0 ? "up" : "down"}">${fmtR(p.r_multiple, 2)}</td>
+        <td><span class="pill ${cls}">${label}</span></td>
+        <td style="font-size:12px;color:var(--text-dim)">${escapeHtml(p.lesson_pt || "")}</td></tr>`;
+    }).join("") || `<tr><td colspan="6" class="empty">Nenhuma revisão ainda</td></tr>`;
+  }
 }
 
 // -- news tab (full feed, all collected sources) -----------------------------
@@ -990,6 +1152,10 @@ async function refreshData() {
     getJSON("/api/news/recent?limit=150").catch(() => cache.newsFull),
     getJSON("/api/bingx/real-equity").catch(() => cache.bingxRealEquity),
   ]);
+  const [intel, excursions] = await Promise.all([
+    getJSON("/api/intelligence/summary").catch(() => cache.intel),
+    getJSON("/api/intelligence/excursions").catch(() => cache.excursions),
+  ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
   );
@@ -1008,7 +1174,7 @@ async function refreshData() {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health,
     macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings, strategySettings, capitalAllocation, newsFull,
-    bingxRealEquity,
+    bingxRealEquity, intel, excursions,
     tradesByAccount: cache.tradesByAccount,
   };
 }
@@ -1035,7 +1201,8 @@ function initTabs() {
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   initTabs();
-  setActiveTab("bingx");
+  const hashTab = location.hash.slice(1);
+  setActiveTab(qsa(".tab-btn").some((b) => b.dataset.tab === hashTab) ? hashTab : "bingx");
   refresh();
   setInterval(refresh, 10000);
 });

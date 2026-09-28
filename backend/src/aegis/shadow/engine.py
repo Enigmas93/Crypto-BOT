@@ -37,9 +37,12 @@ class ShadowTradingEngine:
     def __init__(
         self, candle_repo, shadow_repo, risk_repo, kill_switch_repo, execution, risk_settings,
         derivatives_repo=None, liquidation_repo=None, strategy_settings_repo=None,
-        capital_allocation_repo=None, capital_allocation_key=None,
+        capital_allocation_repo=None, capital_allocation_key=None, excursion_repo=None,
     ) -> None:
         self.candle_repo = candle_repo
+        # Optional (Fase 18): records best/worst mark price while open and
+        # stamps MFE/MAE (in R) on the closed trade.
+        self.excursion_repo = excursion_repo
         self.shadow_repo = shadow_repo
         self.risk_repo = risk_repo
         self.kill_switch_repo = kill_switch_repo
@@ -129,6 +132,8 @@ class ShadowTradingEngine:
     async def _handle_open_position(self, config: ShadowTradingConfig, position: ShadowPosition, account_id: str) -> dict:
         live_position = await self.execution.get_position(config.symbol)
         if live_position.position_amt != 0:
+            if self.excursion_repo is not None:
+                await self.excursion_repo.track(account_id, config.symbol, position.side, live_position.mark_price)
             return {"action": "POSITION_STILL_OPEN", "side": position.side, "entry_price": position.entry_price}
 
         stop_status = await self.execution.get_order_status(config.symbol, position.stop_order_id)
@@ -173,7 +178,12 @@ class ShadowTradingEngine:
             net_pnl=outcome.net_pnl, r_multiple=outcome.r_multiple,
             confluence_score=position.confluence_score, reasons=position.reasons,
         )
+        excursion = (None, None)
+        if self.excursion_repo is not None:
+            excursion = await self.excursion_repo.compute(account_id, config.symbol, filled_order.avg_price)
         await self.shadow_repo.record_trade(trade)
+        if self.excursion_repo is not None:
+            await self.excursion_repo.stamp_last_trade(account_id, config.symbol, *excursion)
         await self.shadow_repo.close_position(account_id, config.symbol)
         await self._update_exposure(account_id, config.interval)
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)

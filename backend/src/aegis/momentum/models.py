@@ -112,6 +112,14 @@ class MomentumConfig:
     # Independent climax-volume check (Fase 17k - see module docstring).
     # None disables it.
     climax_volume_zscore: float | None = 8.0
+    # Fase 18: "TRAILING" (original) or "BRACKET" - a fixed take-profit at
+    # `take_profit_r_multiple` instead of the trailing leg. See config.py's
+    # momentum_exit_mode for the replay evidence.
+    exit_mode: str = "TRAILING"
+    take_profit_r_multiple: float = 2.0
+    # Only trade in the direction of the move the scanner picked the symbol
+    # for (e.g. never SHORT a top 24h gainer on a mean-reversion vote).
+    require_direction_alignment: bool = False
     leverage: int = 3
     warmup_bars: int = 210
     candle_limit: int = 500

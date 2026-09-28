@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aegis.config import get_settings  # noqa: E402
 from aegis.db.engine import close_pool, create_pool  # noqa: E402
+from aegis.db.excursion_repository import ExcursionRepository  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
 from aegis.db.momentum_repository import MomentumRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
@@ -78,7 +79,8 @@ async def _main() -> None:
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     execution = BinanceExecutionProvider(rest)
     engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings,
-                                    strategy_settings_repo=strategy_settings_repo)
+                                    strategy_settings_repo=strategy_settings_repo,
+                                    excursion_repo=ExcursionRepository(pool, "momentum"))
 
     account_id = settings.momentum_account_id
     config = MomentumConfig(
@@ -93,6 +95,8 @@ async def _main() -> None:
         extension_lookback_bars=settings.momentum_extension_lookback_bars,
         extension_atr_multiple=settings.momentum_extension_atr_multiple,
         climax_volume_zscore=settings.momentum_climax_volume_zscore or None,
+        exit_mode=settings.momentum_exit_mode, take_profit_r_multiple=settings.momentum_take_profit_r_multiple,
+        require_direction_alignment=settings.momentum_require_direction_alignment,
     )
 
     try:
@@ -105,6 +109,7 @@ async def _main() -> None:
         )
 
         candidate_symbols: dict[str, float] = {}  # symbol -> momentum_score
+        candidate_changes: dict[str, float] = {}  # symbol -> signed 24h price change %
         last_scan = 0.0
 
         while True:
@@ -120,6 +125,7 @@ async def _main() -> None:
                     log_event(_LOG, "transient_network_error", level=30, stage="scan", error=str(exc))
                 else:
                     candidate_symbols = {c.symbol: c.momentum_score for c in candidates}
+                    candidate_changes = {c.symbol: c.price_change_pct for c in candidates}
                     last_scan = now
                     # Persisted so the dashboard can show what the scanner
                     # currently sees, even between entries - previously only
@@ -148,7 +154,10 @@ async def _main() -> None:
                         continue
                     momentum_score = candidate_symbols.get(symbol, 0.0)
                     try:
-                        result = await engine.run_once_for_symbol(config, symbol, symbol_rules, momentum_score)
+                        result = await engine.run_once_for_symbol(
+                            config, symbol, symbol_rules, momentum_score,
+                            price_change_pct=candidate_changes.get(symbol),
+                        )
                     except BinanceRestError as exc:
                         # A transient network/DNS blip must not kill the
                         # whole process - real stop/trailing orders already

@@ -46,6 +46,17 @@ def test_excludes_bingx_non_crypto_nnco_prefixed_instruments():
     assert [c.symbol for c in result] == ["BTCUSDT"]
 
 
+def test_excludes_bingx_tokenized_stocks_indices_and_forex():
+    tickers = [
+        _ticker("NCSKNVDA2USDUSDT", 6.0, 900_000_000),
+        _ticker("NCSINASDAQ1002USDUSDT", 4.0, 900_000_000),
+        _ticker("NCFXEUR2USDUSDT", 5.0, 900_000_000),
+        _ticker("SUIUSDT", 3.0, 900_000_000),
+    ]
+    result = rank_by_momentum(tickers, min_quote_volume=100_000_000)
+    assert [c.symbol for c in result] == ["SUIUSDT"]
+
+
 def test_excludes_explicit_exclusion_set():
     tickers = [_ticker("BTCUSDT", 10.0, 1_000_000_000), _ticker("ETHUSDT", 3.0, 1_000_000_000)]
     result = rank_by_momentum(tickers, min_quote_volume=100_000_000, exclude={"BTCUSDT"})

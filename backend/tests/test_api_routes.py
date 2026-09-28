@@ -324,7 +324,7 @@ async def test_get_strategy_settings_covers_every_known_strategy(client):
     assert resp.status_code == 200
     body = resp.json()
     ids = {s["strategy_id"] for s in body["strategies"]}
-    assert ids == {"TREND_PULLBACK", "BREAKOUT", "MEAN_REVERSION", "LIQUIDATION_SQUEEZE"}
+    assert ids == {"TREND_PULLBACK", "BREAKOUT", "MEAN_REVERSION", "LIQUIDATION_SQUEEZE", "DONCHIAN_TREND"}
     for s in body["strategies"]:
         assert isinstance(s["enabled"], bool)
 
@@ -485,3 +485,22 @@ async def test_set_bingx_mode_to_same_mode_is_a_no_op(client):
     resp = await client.post("/api/settings/bingx/mode", json={"mode": current["mode"]})
     assert resp.status_code == 200
     assert resp.json()["mode"] == current["mode"]
+
+
+@pytest.mark.asyncio
+async def test_intelligence_summary_shape_and_active_config(client):
+    resp = await client.get("/api/intelligence/summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    for key in ("briefs", "news", "pulse", "reviews", "listings", "research"):
+        assert isinstance(body[key], list)
+    assert "DONCHIAN_TREND" in body["active_config"]["strategies"]
+    assert body["active_config"]["shadow"]["take_profit_r"] > 0
+
+
+@pytest.mark.asyncio
+async def test_intelligence_excursions_shape(client):
+    resp = await client.get("/api/intelligence/excursions")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["closed"], list) and isinstance(body["open"], list)

@@ -3,11 +3,11 @@
 scripts/run_shadow_trading.py, and the second stage of the same
 VST -> Shadow -> Paper -> Live funnel already used for Binance.
 
-Market data is still Binance's (public, free, already deeply tested) - only
-EXECUTION happens on BingX, via BingXExecutionProvider, behind the exact
-same ShadowTradingEngine every other exchange uses. This is the
-architectural point of the whole migration: nothing about the strategy,
-confluence or risk pipeline changes, only which exchange places the order.
+Fase 18: candles come from BingX itself (RestCandleSource over BingX's
+public klines) so indicators are computed on the prices orders actually
+fill against; Binance still supplies the derivatives/liquidation context.
+Everything else is the exact same ShadowTradingEngine every other exchange
+uses - strategy, confluence and risk pipeline are unchanged.
 
 Fase 17: the BingX API key and demo/live mode are no longer read from
 .env - they're managed from the dashboard (Configurações > BingX) and
@@ -41,17 +41,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from aegis.config import get_settings  # noqa: E402
 from aegis.db.bingx_account_repository import BingxAccountRepository  # noqa: E402
-from aegis.db.candle_repository import CandleRepository  # noqa: E402
 from aegis.db.capital_allocation_repository import CapitalAllocationRepository  # noqa: E402
+from aegis.db.derivatives_repository import DerivativesRepository  # noqa: E402
 from aegis.db.engine import close_pool, create_pool  # noqa: E402
+from aegis.db.excursion_repository import ExcursionRepository  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
+from aegis.db.liquidation_repository import LiquidationRepository  # noqa: E402
+from aegis.market.rest_candle_source import RestCandleSource  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
 from aegis.db.shadow_repository import ShadowRepository  # noqa: E402
 from aegis.db.strategy_settings_repository import StrategySettingsRepository  # noqa: E402
 from aegis.execution.bingx_session import BingxCredentialsNotConfigured, BingxSessionManager  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
-from aegis.providers.bingx.rest_client import BingXRestError  # noqa: E402
+from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXRestError  # noqa: E402
 from aegis.shadow.engine import ShadowTradingEngine  # noqa: E402
 from aegis.shadow.models import ShadowTradingConfig  # noqa: E402
 
@@ -61,13 +64,15 @@ _ACCOUNT_SUFFIX = "shadow_bingx"
 
 
 def _build_configs(account_id: str, settings) -> list[ShadowTradingConfig]:
+    bracket = dict(stop_atr_multiple=settings.strategy_stop_atr_multiple,
+                   take_profit_r_multiple=settings.strategy_take_profit_r_multiple)
     return [
         ShadowTradingConfig(symbol=symbol, interval=_CORE_INTERVAL, account_id=account_id,
-                             candle_limit=settings.paper_trading_candle_limit)
+                             candle_limit=settings.paper_trading_candle_limit, **bracket)
         for symbol in settings.core_symbols
     ] + [
         ShadowTradingConfig(symbol=symbol, interval=settings.speculative_interval, account_id=account_id,
-                             candle_limit=settings.paper_trading_candle_limit)
+                             candle_limit=settings.paper_trading_candle_limit, **bracket)
         for symbol in settings.speculative_symbol_list
     ]
 
@@ -77,7 +82,8 @@ async def _main() -> None:
     configure_logging(settings.log_level)
 
     pool = await create_pool(settings)
-    candle_repo = CandleRepository(pool)
+    derivatives_repo = DerivativesRepository(pool)
+    liquidation_repo = LiquidationRepository(pool)
     shadow_repo = ShadowRepository(pool)
     risk_repo = RiskRepository(pool)
     strategy_settings_repo = StrategySettingsRepository(pool)
@@ -86,6 +92,7 @@ async def _main() -> None:
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     account_repo = BingxAccountRepository(pool, settings.credential_encryption_key)
     session_manager = BingxSessionManager(account_repo, _ACCOUNT_SUFFIX, "scripts.run_bingx_shadow_trading")
+    market_rest = BingXFuturesRestClient(testnet=False)  # public market data only, no credentials
 
     try:
         while True:
@@ -121,10 +128,20 @@ async def _main() -> None:
                 continue
 
             await risk_repo.initialize_account_state(account_id, starting_equity=starting_equity)
-            engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, session.execution, settings,
+            # Fase 18: signals from BingX's own candles (the prices orders
+            # actually fill against); derivatives/liquidation context stays
+            # Binance's - Binance is the dominant perp venue, so its funding,
+            # OI and liquidation flow describe market-wide positioning, and
+            # BingX publishes no liquidation stream at all.
+            # Production public klines even in demo mode - VST's market data
+            # is only partially real (see run_bingx_momentum_trading.py).
+            engine = ShadowTradingEngine(RestCandleSource(market_rest), shadow_repo, risk_repo, kill_switch_repo,
+                                          session.execution, settings,
+                                          derivatives_repo=derivatives_repo, liquidation_repo=liquidation_repo,
                                           strategy_settings_repo=strategy_settings_repo,
                                           capital_allocation_repo=capital_allocation_repo,
-                                          capital_allocation_key="shadow_bingx")
+                                          capital_allocation_key="shadow_bingx",
+                                          excursion_repo=ExcursionRepository(pool, "shadow"))
             configs = _build_configs(account_id, settings)
             log_event(
                 _LOG, "session_started", account_id=account_id, mode=session.mode,
@@ -183,6 +200,7 @@ async def _main() -> None:
                         log_event(_LOG, "cycle", symbol=config.symbol, action=action, **result)
                 await asyncio.sleep(settings.paper_trading_poll_interval_seconds)
     finally:
+        await market_rest.aclose()
         await notifier.aclose()
         await session_manager.aclose()
         await close_pool(pool)

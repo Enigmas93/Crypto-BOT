@@ -37,11 +37,14 @@ from dataclasses import dataclass
 
 from aegis.providers.binance.models import TickerStats
 
-_NON_CRYPTO_ASSET_PREFIX = "NCCO"
+# NCCO = commodities; NCSK = single stocks (NVDA, MSTR, ...), NCSI = stock
+# indices (NASDAQ100, NIKKEI225), NCFX = forex - all seen live on BingX's
+# ticker endpoint 2026-09-28 with >$10M volume, all hit the same 101414.
+_NON_CRYPTO_ASSET_PREFIXES = ("NCCO", "NCSK", "NCSI", "NCFX")
 
 
 def _is_crypto_symbol(symbol: str) -> bool:
-    return not symbol.startswith(_NON_CRYPTO_ASSET_PREFIX)
+    return not symbol.startswith(_NON_CRYPTO_ASSET_PREFIXES)
 
 
 @dataclass(slots=True)

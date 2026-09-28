@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from aegis.config import Settings
+from aegis.db.ai_repository import AiRepository
 from aegis.db.backtest_repository import BacktestRepository
 from aegis.db.bingx_account_repository import BingxAccountRepository
 from aegis.db.candle_repository import CandleRepository
@@ -100,3 +101,11 @@ def get_strategy_settings_repo(request: Request) -> StrategySettingsRepository:
 
 def get_capital_allocation_repo(request: Request) -> CapitalAllocationRepository:
     return CapitalAllocationRepository(request.app.state.pool)
+
+
+def get_ai_repo(request: Request) -> AiRepository:
+    return AiRepository(request.app.state.pool)
+
+
+def get_pool(request: Request):
+    return request.app.state.pool

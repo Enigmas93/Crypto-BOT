@@ -36,6 +36,7 @@
     <button class="tab-btn" data-tab="overview">OVERVIEW</button>
     <button class="tab-btn" data-tab="binance">BINANCE</button>
     <button class="tab-btn active" data-tab="bingx">BINGX</button>
+    <button class="tab-btn" data-tab="intel">INTELIGÊNCIA</button>
     <button class="tab-btn" data-tab="strategies">STRATEGIES</button>
     <button class="tab-btn" data-tab="positions">POSITIONS</button>
     <button class="tab-btn" data-tab="orders">ORDERS</button>
@@ -159,6 +160,73 @@
       </div>
     </div>
 
+    <!-- ============ INTELIGÊNCIA (Fase 18) ============ -->
+    <div class="view" id="view-intel">
+      <div class="kpi-strip" id="intel-kpis"></div>
+
+      <div class="section-title">Evidência — por que o robô opera assim</div>
+      <div class="grid full"><div class="card">
+        <h2>Backtest com custos reais do BingX <span class="link" id="intel-evidence-source-note"></span></h2>
+        <div class="subtitle">
+          Mesmas regras de produção (conferidas barra a barra por teste automático), taxa de 0,05% por lado + slippage.
+          <b>R</b> = quanto o trade rendeu em múltiplos do risco assumido (1R = perder o stop inteiro).
+          "Validação" = últimos 40% do histórico, que não foram usados para escolher a configuração.
+        </div>
+        <div class="chip-row" id="intel-evidence-chips"></div>
+        <div class="table-scroll"><table class="evidence-table"><thead><tr>
+          <th>Configuração</th><th>Trades</th><th>Acerto</th><th>R médio</th><th>R médio validação</th>
+          <th style="min-width:180px">Validação (−0,2R … +0,2R)</th><th>Fator lucro</th><th>Pares +</th><th>Por semestre</th>
+        </tr></thead><tbody id="intel-evidence-table"></tbody></table></div>
+      </div></div>
+
+      <div class="section-title">Briefing de mercado da IA <span class="section-hint">atualizado a cada hora · só observação, não envia ordens</span></div>
+      <div class="brief-grid" id="intel-briefs"></div>
+
+      <div class="grid g2">
+        <div class="card"><h2>Notícias lidas pela IA</h2>
+          <div class="subtitle">A IA lê título e resumo, entende negação e contexto e classifica o impacto de curto prazo. Ao lado, a leitura antiga por palavras-chave, para comparar.</div>
+          <div class="table-scroll" style="max-height:520px;overflow-y:auto"><table><thead><tr>
+            <th>Quando</th><th>Notícia</th><th>IA</th><th>Mag.</th><th>Tipo</th><th>Palavra-chave</th>
+          </tr></thead><tbody id="intel-news"></tbody></table></div>
+        </div>
+        <div class="card"><h2>Pulso por ativo (24h)</h2>
+          <div class="subtitle">Soma da magnitude (positiva − negativa) das notícias lidas pela IA.</div>
+          <div class="table-scroll"><table><thead><tr><th>Ativo</th><th>Notícias</th><th>Saldo</th><th>Maior mag.</th></tr></thead>
+            <tbody id="intel-pulse"></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="grid g2">
+        <div class="card"><h2>Radar de listagens (Binance · Upbit · OKX)</h2>
+          <div class="explain-box" style="margin-bottom:10px">
+            Estudo em 437 anúncios reais: o token já sobe em média <b>+20%</b> entre 5 min antes do anúncio e o 2º minuto
+            depois — antes de qualquer robô por consulta conseguir entrar. Depois disso, o retorno mediano é ≈0 em 1h e
+            −3% em 4h (Upbit). Por isso o radar só <b>alerta</b>, nunca compra sozinho.
+          </div>
+          <div class="table-scroll"><table><thead><tr><th>Anúncio</th><th>Fonte</th><th>Token</th><th>No BingX</th><th>Preço na detecção</th></tr></thead>
+            <tbody id="intel-listings"></tbody></table></div>
+        </div>
+        <div class="card"><h2>Os perdedores ficaram positivos antes?</h2>
+          <div class="subtitle">MFE = máximo a favor, MAE = máximo contra, em R, medidos no mark price a cada ciclo (trades abertos a partir desta versão).</div>
+          <div class="table-scroll"><table><thead><tr><th>Conta</th><th>Trades</th><th>Perdas</th><th>Perdas que chegaram a +0,5R</th><th>MFE médio</th><th>Resultado médio</th></tr></thead>
+            <tbody id="intel-excursions"></tbody></table></div>
+          <div class="explain-box ok" style="margin-top:10px">
+            Nos 43 trades reais anteriores, 22 dos 30 perdedores chegaram a +0,5R. Mesmo assim, breakeven em +0,5R ou
+            +0,75R <b>piorou</b> o resultado em anos de histórico (tabela de evidência acima): ele salva alguns perdedores,
+            mas zera mais trades que voltariam a dar lucro.
+          </div>
+          <div class="table-scroll" style="margin-top:10px"><table><thead><tr><th>Posição aberta</th><th>Lado</th><th>MFE agora</th><th>MAE agora</th></tr></thead>
+            <tbody id="intel-open-excursions"></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="grid full"><div class="card"><h2>Revisão de trades pela IA</h2>
+        <div class="subtitle">Cada trade fechado é revisado com base nos motivos de entrada, stop/alvo, MFE/MAE e saída.</div>
+        <div class="table-scroll"><table><thead><tr><th>Quando</th><th>Conta</th><th>Símbolo</th><th>Resultado</th><th>Veredito</th><th>Lição</th></tr></thead>
+          <tbody id="intel-reviews"></tbody></table></div>
+      </div></div>
+    </div>
+
     <!-- ============ STRATEGIES ============ -->
     <div class="view" id="view-strategies">
       <div class="section-title">Todas as estratégias</div>
@@ -168,8 +236,9 @@
       <div class="grid full"><div class="card">
         <p class="settings-note">
           Ativa/desativa um motor de confluência em todas as contas de uma vez (Paper, Shadow, Momentum —
-          Binance e BingX). LIQUIDATION_SQUEEZE só produz sinal real em contas Binance (Paper/Shadow) hoje —
-          a BingX ainda não coleta dado de derivativos/liquidação, então fica presente na votação mas inerte lá.
+          Binance e BingX). LIQUIDATION_SQUEEZE usa funding/OI/liquidações da Binance e vota no Paper, no Shadow e no
+          Shadow BingX; no Momentum (universo dinâmico, sem stream de liquidação) ele se abstém sem diluir os outros.
+          DONCHIAN_TREND (Fase 18) confirma rompimentos de tendência — veja a aba INTELIGÊNCIA para a evidência.
         </p>
         <div id="strategy-toggles" style="display:flex;gap:10px;flex-wrap:wrap"></div>
       </div></div>
@@ -199,7 +268,7 @@
           <span class="chip" data-account="momentum_bingx_demo" onclick="setOrdersFilter('momentum_bingx_demo')">MOMENTUM BINGX (DEMO)</span>
           <span class="chip" data-account="momentum_bingx_live" onclick="setOrdersFilter('momentum_bingx_live')">MOMENTUM BINGX (REAL)</span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>Estratégia</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>Fechado em</th></tr></thead>
+        <div class="table-scroll"><table><thead><tr><th>Estratégia</th><th>Símbolo</th><th>Lado</th><th>Motivo saída</th><th>PnL</th><th>R</th><th>MFE</th><th>Fechado em</th></tr></thead>
           <tbody id="orders-table"></tbody></table></div>
       </div>
     </div>

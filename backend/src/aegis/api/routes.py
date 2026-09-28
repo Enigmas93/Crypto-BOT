@@ -16,7 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from aegis.api.dependencies import (
+    get_ai_repo,
     get_backtest_repo,
+    get_pool,
     get_bingx_account_repo,
     get_binance_rest,
     get_candle_repo,
@@ -36,6 +38,7 @@ from aegis.api.dependencies import (
     get_walk_forward_repo,
 )
 from aegis.config import Settings
+from aegis.db.ai_repository import AiRepository
 from aegis.db.backtest_repository import BacktestRepository
 from aegis.db.bingx_account_repository import BingxAccountRepository
 from aegis.db.candle_repository import CandleRepository
@@ -710,6 +713,74 @@ async def set_capital_allocation(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"allocations": await capital_allocation_repo.get_all_allocations()}
+
+
+# -- intelligence: AI layer, listing radar, research evidence (Fase 18) --------
+@router.get("/intelligence/summary")
+async def get_intelligence_summary(
+    settings: Settings = Depends(get_settings_dep), ai_repo: AiRepository = Depends(get_ai_repo),
+) -> dict:
+    briefs, news, pulse, reviews, listings, research = await asyncio.gather(
+        ai_repo.latest_insight_per_subject("MARKET_BRIEF"),
+        ai_repo.fetch_recent_news_with_ai(40),
+        ai_repo.ai_news_pulse(24),
+        ai_repo.latest_insights("TRADE_REVIEW", 30),
+        ai_repo.recent_listing_events(30),
+        ai_repo.latest_research_runs(40),
+    )
+    return {
+        "ai_enabled": bool(settings.nvidia_api_key), "models": settings.nvidia_model_list,
+        "briefs": briefs, "news": news, "pulse": pulse, "reviews": reviews, "listings": listings,
+        "research": research,
+        "active_config": {
+            "shadow": {"interval": "1h", "stop_atr": settings.strategy_stop_atr_multiple,
+                       "take_profit_r": settings.strategy_take_profit_r_multiple,
+                       "speculative_interval": settings.speculative_interval},
+            "momentum": {"interval": settings.momentum_interval, "exit_mode": settings.momentum_exit_mode,
+                         "take_profit_r": settings.momentum_take_profit_r_multiple,
+                         "direction_alignment": settings.momentum_require_direction_alignment},
+            "strategies": list(ALL_STRATEGY_IDS),
+        },
+    }
+
+
+@router.get("/intelligence/excursions")
+async def get_excursions(pool=Depends(get_pool)) -> dict:
+    """How far closed trades went in our favor before exiting (MFE) and
+    against us (MAE), in R - recorded live from the mark price since Fase 18,
+    so these numbers only cover trades opened after that."""
+    async with pool.acquire() as conn:
+        closed = await conn.fetch(
+            """
+            SELECT account_id, count(*) AS trades,
+                   count(*) FILTER (WHERE r_multiple < 0) AS losers,
+                   count(*) FILTER (WHERE r_multiple < 0 AND mfe_r >= 0.5) AS losers_green_05r,
+                   count(*) FILTER (WHERE r_multiple < 0 AND mfe_r >= 1.0) AS losers_green_1r,
+                   avg(mfe_r) AS avg_mfe_r, avg(mae_r) AS avg_mae_r, avg(r_multiple) AS avg_result_r
+            FROM (SELECT account_id, r_multiple, mfe_r, mae_r FROM shadow_trades WHERE mfe_r IS NOT NULL
+                  UNION ALL
+                  SELECT account_id, r_multiple, mfe_r, mae_r FROM momentum_trades WHERE mfe_r IS NOT NULL) t
+            GROUP BY account_id ORDER BY account_id
+            """
+        )
+        open_rows = await conn.fetch(
+            """
+            SELECT 'shadow' AS engine, account_id, symbol, side, entry_price, stop_price, best_price, worst_price
+            FROM shadow_positions
+            UNION ALL
+            SELECT 'momentum', account_id, symbol, side, entry_price, stop_price, best_price, worst_price
+            FROM momentum_positions
+            """
+        )
+    open_positions = []
+    for r in open_rows:
+        risk = abs(r["entry_price"] - r["stop_price"]) or None
+        sign = 1 if r["side"] == "LONG" else -1
+        mfe = None if risk is None or r["best_price"] is None else round((r["best_price"] - r["entry_price"]) * sign / risk, 2)
+        mae = None if risk is None or r["worst_price"] is None else round((r["entry_price"] - r["worst_price"]) * sign / risk, 2)
+        open_positions.append({"engine": r["engine"], "account_id": r["account_id"], "symbol": r["symbol"],
+                               "side": r["side"], "mfe_r": mfe, "mae_r": mae})
+    return {"closed": [dict(r) for r in closed], "open": open_positions}
 
 
 def _stale_threshold_seconds(interval: str) -> float:

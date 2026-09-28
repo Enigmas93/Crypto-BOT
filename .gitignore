@@ -24,3 +24,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Downloaded kline history for scripts/run_strategy_research.py
+.research_cache/

@@ -121,7 +121,19 @@ class Settings(BaseSettings):
     # and the other data engines.
     core_trading_symbols: str = "BTCUSDT,ETHUSDT"
     speculative_symbols: str = "SOLUSDT,XRPUSDT,DOGEUSDT,1000PEPEUSDT,NEARUSDT"
-    speculative_interval: str = "15m"
+    # 1h, not 15m (2026-09-28 research): on 15m a 2-ATR stop is so tight that
+    # taker fees + slippage cost ~0.3R per trade, and every strategy/filter/
+    # exit combination tested lost money in-sample AND out-of-sample across
+    # 20 pairs. On 1h the same signals are net positive.
+    speculative_interval: str = "1h"
+
+    # Shadow/Paper bracket geometry (2026-09-28 research, see README "Fase 18"):
+    # 2 ATR stop / 3R target beat 2R on both Binance (20 pairs, 2y) and
+    # BingX-native data (35 pairs, 21 months), with DONCHIAN_TREND added.
+    # Breakeven and ATR trailing were tested for these engines and LOWERED
+    # expectancy - they rescue some losers but scratch more eventual winners.
+    strategy_stop_atr_multiple: float = 2.0
+    strategy_take_profit_r_multiple: float = 3.0
 
     # Momentum / "moonshot" scanner (Fase 14) --------------------------------------
     # Scoped to liquid pairs ONLY - the user was explicitly asked and chose this
@@ -130,7 +142,15 @@ class Settings(BaseSettings):
     # symbol list here - the Scanner (aegis.scanner.ranking) picks candidates
     # dynamically each cycle from Binance's real 24h stats.
     momentum_account_id: str = "momentum"
-    momentum_interval: str = "15m"
+    momentum_interval: str = "1h"
+    # 2026-09-28 replay on BingX-native 1h data (35 pairs): the tight ATR
+    # trailing exit lost in every period (-0.03 to -0.05R/trade); a fixed
+    # 2 ATR / 2R bracket with the signal required to agree with the 24h move's
+    # direction was the only variant near break-even or better. BRACKET uses
+    # the fixed take-profit; TRAILING keeps the old behavior.
+    momentum_exit_mode: str = "BRACKET"
+    momentum_take_profit_r_multiple: float = 2.0
+    momentum_require_direction_alignment: bool = True
     momentum_min_quote_volume: float = 500_000_000.0  # 24h USDT volume floor (Binance scanner only)
     momentum_top_n: int = 5
     momentum_scan_interval_seconds: float = 900.0  # how often to re-rank candidates
@@ -209,8 +229,20 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # AI layer / NVIDIA NIM ---------------------------------------------------
+    # Tried in order; a model that fails goes on cooldown (see
+    # aegis.ai.nvidia_client for the live measurements behind this chain).
+    nvidia_api_key: str = ""
+    nvidia_models: str = (
+        "nvidia/nemotron-3-super-120b-a12b,google/gemma-4-31b-it,openai/gpt-oss-20b,nvidia/nemotron-3-ultra-550b-a55b"
+    )
+
     # Logging ---------------------------------------------------------------
     log_level: str = "INFO"
+
+    @property
+    def nvidia_model_list(self) -> list[str]:
+        return [m.strip() for m in self.nvidia_models.split(",") if m.strip()]
 
     @property
     def symbols(self) -> list[str]:

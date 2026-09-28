@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 import pytest
 
-from aegis.execution.binance_provider import BracketOpenError, TrailingBracketOrders
+from aegis.execution.binance_provider import BracketOpenError, BracketOrders, TrailingBracketOrders
 from aegis.momentum.engine import MomentumTradingEngine
 from aegis.momentum.models import MomentumConfig, MomentumPosition
 from aegis.providers.binance.models import AlgoOrderResult, Kline, OrderResult, PositionRisk, SymbolRules
@@ -218,6 +218,12 @@ class _FakeExecutionProvider:
                                     reduce_only=True, close_position=False, stop_price=None,
                                     update_time_ms=1700000000000)
         return TrailingBracketOrders(entry=entry, stop=stop, trailing_stop=trailing)
+
+    async def open_bracket_position(self, symbol, side, quantity, stop_price, take_profit_price, leverage):
+        self.open_bracket_calls = getattr(self, "open_bracket_calls", [])
+        self.open_bracket_calls.append((symbol, side, quantity, stop_price, take_profit_price, leverage))
+        orders = await self.open_trailing_bracket_position(symbol, side, quantity, stop_price, 1.0, leverage)
+        return BracketOrders(entry=orders.entry, stop=orders.stop, take_profit=orders.trailing_stop)
 
 
 class _Settings:
@@ -589,6 +595,65 @@ async def test_extension_filter_disabled_when_lookback_is_zero():
 
     result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
 
+    assert result["action"] == "ENTRY_OPENED"
+
+
+@pytest.mark.asyncio
+async def test_bracket_exit_mode_places_fixed_take_profit_instead_of_trailing():
+    # Fase 18: BingX-native replay showed the tight trailing exit losing in
+    # every period; BRACKET mode uses a fixed take-profit at N R instead.
+    closes, volume = _consolidation_then_breakout()
+    engine, momentum_repo, _, _, execution = _engine(_klines(closes, volume))
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210, exit_mode="BRACKET",
+                             take_profit_r_multiple=2.0)
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+
+    assert result["action"] == "ENTRY_OPENED"
+    [(_, side, _, stop_price, tp_price, leverage)] = execution.open_bracket_calls
+    assert side == "LONG" and tp_price > stop_price and leverage == config.leverage
+    position = momentum_repo.positions[(config.account_id, "ETHUSDT")]
+    reference = closes[-1]
+    assert tp_price - reference == pytest.approx(2.0 * (reference - stop_price), rel=0.02)
+    assert position.trailing_order_id != position.stop_order_id
+
+
+@pytest.mark.asyncio
+async def test_bracket_mode_labels_profit_leg_fill_as_take_profit():
+    closes, volume = _consolidation_then_breakout()
+    engine, momentum_repo, *_, execution = _engine(_klines(closes, volume))
+    config = MomentumConfig(exit_mode="BRACKET")
+    momentum_repo.positions[(config.account_id, "ETHUSDT")] = MomentumPosition(
+        side="LONG", entry_time=datetime(2026, 1, 1, tzinfo=UTC), entry_price=100.0, quantity=0.01,
+        stop_order_id=101, trailing_order_id=102, stop_price=96.0, risk_amount=1.0,
+        confluence_score=40.0, momentum_score=15.0, reasons=["test"],
+    )
+    execution.set_order_status(101, "CANCELED")
+    execution.set_order_status(102, "FILLED", avg_price=108.0)
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=15.0)
+
+    assert result["trade"].exit_reason == "TAKE_PROFIT"
+
+
+@pytest.mark.asyncio
+async def test_direction_alignment_blocks_a_long_on_a_24h_loser():
+    closes, volume = _consolidation_then_breakout()
+    engine, momentum_repo, *_ = _engine(_klines(closes, volume))
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210, require_direction_alignment=True)
+
+    blocked = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=9.0, price_change_pct=-9.0)
+    assert blocked["action"] == "DIRECTION_MISALIGNED"
+    assert momentum_repo.positions == {}
+
+
+@pytest.mark.asyncio
+async def test_direction_alignment_allows_a_long_on_a_24h_gainer():
+    closes, volume = _consolidation_then_breakout()
+    engine, momentum_repo, *_ = _engine(_klines(closes, volume))
+    config = MomentumConfig(strategy_ids=(STRATEGY_BREAKOUT,), warmup_bars=210, require_direction_alignment=True)
+
+    result = await engine.run_once_for_symbol(config, "ETHUSDT", _rules(), momentum_score=9.0, price_change_pct=9.0)
     assert result["action"] == "ENTRY_OPENED"
 
 

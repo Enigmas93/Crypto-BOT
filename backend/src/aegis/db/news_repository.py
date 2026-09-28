@@ -91,11 +91,15 @@ class NewsRepository:
         return [dict(r) for r in rows]
 
     async def fetch_recent_by_asset(self, asset: str, window_hours: int) -> list[NewsItemForConflict]:
+        # Fase 18: the LLM's reading wins when it exists - it handles
+        # negation/context the keyword lexicon gets wrong (e.g. "SEC rejects
+        # ETF" scored positive on the word "ETF").
         query = """
-            SELECT n.source_id, ns.source_quality, n.sentiment, n.published_at
+            SELECT n.source_id, ns.source_quality, COALESCE(a.sentiment, n.sentiment) AS sentiment, n.published_at
             FROM news n
             JOIN news_entities ne ON ne.source_id = n.source_id AND ne.guid = n.guid
             JOIN news_sources ns ON ns.source_id = n.source_id
+            LEFT JOIN ai_news_analysis a ON a.source_id = n.source_id AND a.guid = n.guid
             WHERE ne.asset = $1
               AND COALESCE(n.published_at, n.ingested_at) >= now() - make_interval(hours => $2::int)
             ORDER BY n.published_at

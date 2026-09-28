@@ -45,6 +45,7 @@ from aegis.config import get_settings  # noqa: E402
 from aegis.db.bingx_account_repository import BingxAccountRepository  # noqa: E402
 from aegis.db.capital_allocation_repository import CapitalAllocationRepository  # noqa: E402
 from aegis.db.engine import close_pool, create_pool  # noqa: E402
+from aegis.db.excursion_repository import ExcursionRepository  # noqa: E402
 from aegis.db.kill_switch_repository import KillSwitchRepository  # noqa: E402
 from aegis.db.momentum_repository import MomentumRepository  # noqa: E402
 from aegis.db.risk_repository import RiskRepository  # noqa: E402
@@ -54,7 +55,7 @@ from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa
 from aegis.momentum.engine import MomentumTradingEngine  # noqa: E402
 from aegis.momentum.models import MomentumConfig  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
-from aegis.providers.bingx.rest_client import BingXRestError  # noqa: E402
+from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXRestError  # noqa: E402
 
 _LOG = get_logger("scripts.run_bingx_momentum_trading")
 _ACCOUNT_SUFFIX = "momentum_bingx"
@@ -73,6 +74,8 @@ def _build_config(account_id: str, settings) -> MomentumConfig:
         extension_lookback_bars=settings.momentum_extension_lookback_bars,
         extension_atr_multiple=settings.momentum_extension_atr_multiple,
         climax_volume_zscore=settings.momentum_climax_volume_zscore or None,
+        exit_mode=settings.momentum_exit_mode, take_profit_r_multiple=settings.momentum_take_profit_r_multiple,
+        require_direction_alignment=settings.momentum_require_direction_alignment,
     )
 
 
@@ -89,6 +92,7 @@ async def _main() -> None:
     kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
     account_repo = BingxAccountRepository(pool, settings.credential_encryption_key)
     session_manager = BingxSessionManager(account_repo, _ACCOUNT_SUFFIX, "scripts.run_bingx_momentum_trading")
+    market_rest = BingXFuturesRestClient(testnet=False)  # public market data only, no credentials
 
     try:
         while True:
@@ -117,10 +121,18 @@ async def _main() -> None:
                 await asyncio.sleep(settings.momentum_poll_interval_seconds)
                 continue
 
-            engine = MomentumTradingEngine(session.rest, momentum_repo, risk_repo, kill_switch_repo, session.execution, settings,
+            # Market data (scanner tickers, klines, correlation) always comes
+            # from BingX PRODUCTION public endpoints, even in demo mode: found
+            # live 2026-09-28 that the VST (demo) environment's klines track
+            # real prices but its 24h ticker stats are synthetic (every pair
+            # ~0% change, invented volumes - FONE-USDT showed $20M on VST vs
+            # $0.76M real), so the demo scanner was ranking illiquid noise
+            # instead of the real movers. Orders still go to session.execution.
+            engine = MomentumTradingEngine(market_rest, momentum_repo, risk_repo, kill_switch_repo, session.execution, settings,
                                             strategy_settings_repo=strategy_settings_repo,
                                             capital_allocation_repo=capital_allocation_repo,
-                                            capital_allocation_key="momentum_bingx")
+                                            capital_allocation_key="momentum_bingx",
+                                            excursion_repo=ExcursionRepository(pool, "momentum"))
             config = _build_config(account_id, settings)
 
             await risk_repo.initialize_account_state(account_id, starting_equity=starting_equity)
@@ -132,6 +144,7 @@ async def _main() -> None:
             )
 
             candidate_symbols: dict[str, float] = {}  # symbol -> momentum_score
+            candidate_changes: dict[str, float] = {}  # symbol -> signed 24h price change %
             last_scan = 0.0
             warned_unlisted: set[str] = set()  # defensive only now - see run loop comment
 
@@ -155,6 +168,7 @@ async def _main() -> None:
                         log_event(_LOG, "transient_network_error", level=30, stage="scan", error=str(exc))
                     else:
                         candidate_symbols = {c.symbol: c.momentum_score for c in candidates}
+                        candidate_changes = {c.symbol: c.price_change_pct for c in candidates}
                         last_scan = now
                         await momentum_repo.save_scan_results(candidates, scanned_at=datetime.now(UTC))
                         log_event(
@@ -181,7 +195,10 @@ async def _main() -> None:
                             continue
                         momentum_score = candidate_symbols.get(symbol, 0.0)
                         try:
-                            result = await engine.run_once_for_symbol(config, symbol, symbol_rules, momentum_score)
+                            result = await engine.run_once_for_symbol(
+                                config, symbol, symbol_rules, momentum_score,
+                                price_change_pct=candidate_changes.get(symbol),
+                            )
                         except BingXRestError as exc:
                             log_event(_LOG, "transient_network_error", level=30, stage="run_once_for_symbol",
                                       symbol=symbol, error=str(exc))
@@ -210,6 +227,7 @@ async def _main() -> None:
 
                 await asyncio.sleep(settings.momentum_poll_interval_seconds)
     finally:
+        await market_rest.aclose()
         await notifier.aclose()
         await session_manager.aclose()
         await close_pool(pool)

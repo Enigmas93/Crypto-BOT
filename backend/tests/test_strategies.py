@@ -7,6 +7,7 @@ from aegis.liquidation.service import LiquidationSnapshot
 from aegis.news.conflict import AssetNewsStatus
 from aegis.strategy.strategies import (
     STRATEGY_BREAKOUT,
+    STRATEGY_DONCHIAN_TREND,
     STRATEGY_EVENT_REACTION,
     STRATEGY_LIQUIDATION_SQUEEZE,
     STRATEGY_MEAN_REVERSION,
@@ -336,9 +337,10 @@ def test_evaluate_all_returns_one_signal_per_strategy():
                           market_structure_trend="UPTREND", breakout=False, breakdown=False,
                           volume_zscore_20=0.0, distance_from_vwap_pct=0.0)
     signals = evaluate_all(snapshot)
-    assert len(signals) == 4
+    assert len(signals) == 5
     assert {s.strategy_id for s in signals} == {
         STRATEGY_TREND_PULLBACK, STRATEGY_BREAKOUT, STRATEGY_MEAN_REVERSION, STRATEGY_LIQUIDATION_SQUEEZE,
+        STRATEGY_DONCHIAN_TREND,
     }
 
 
@@ -354,7 +356,7 @@ def test_evaluate_all_ignores_news_status_when_event_reaction_not_requested():
     confirmed = AssetNewsStatus(asset="BTC", status="CONFIRMED", distinct_sources=3,
                                  item_count=5, dominant_sentiment="positive")
     signals = evaluate_all(snapshot, news_status=confirmed)
-    assert len(signals) == 4
+    assert len(signals) == 5
     assert STRATEGY_EVENT_REACTION not in {s.strategy_id for s in signals}
 
 

@@ -53,6 +53,7 @@ from aegis.execution.binance_provider import BinanceExecutionProvider  # noqa: E
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient, BinanceRestError  # noqa: E402
+from aegis.db.excursion_repository import ExcursionRepository  # noqa: E402
 from aegis.shadow.engine import ShadowTradingEngine  # noqa: E402
 from aegis.shadow.models import ShadowTradingConfig  # noqa: E402
 
@@ -95,20 +96,23 @@ async def _main() -> None:
     execution = BinanceExecutionProvider(rest)
     engine = ShadowTradingEngine(candle_repo, shadow_repo, risk_repo, kill_switch_repo, execution, settings,
                                   derivatives_repo=derivatives_repo, liquidation_repo=liquidation_repo,
-                                  strategy_settings_repo=strategy_settings_repo)
+                                  strategy_settings_repo=strategy_settings_repo,
+                                  excursion_repo=ExcursionRepository(pool, "shadow"))
 
     account_id = "shadow"
     try:
         rules_by_symbol = await rest.get_symbol_rules()
         await risk_repo.initialize_account_state(account_id, starting_equity=_STARTING_EQUITY)
 
+        bracket = dict(stop_atr_multiple=settings.strategy_stop_atr_multiple,
+                       take_profit_r_multiple=settings.strategy_take_profit_r_multiple)
         configs = [
             ShadowTradingConfig(symbol=symbol, interval=_CORE_INTERVAL, account_id=account_id,
-                                 candle_limit=settings.paper_trading_candle_limit)
+                                 candle_limit=settings.paper_trading_candle_limit, **bracket)
             for symbol in settings.core_symbols
         ] + [
             ShadowTradingConfig(symbol=symbol, interval=settings.speculative_interval, account_id=account_id,
-                                 candle_limit=settings.paper_trading_candle_limit)
+                                 candle_limit=settings.paper_trading_candle_limit, **bracket)
             for symbol in settings.speculative_symbol_list
         ]
         log_event(

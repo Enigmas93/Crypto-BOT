@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from aegis.execution.fills import apply_slippage, close_position, compute_stop
+from aegis.execution.fills import apply_slippage, close_position, compute_stop, compute_take_profit
 from aegis.execution.models import BracketOpenError, OpenPosition
 from aegis.momentum.candles import klines_to_closed_dataframe
 from aegis.momentum.models import MomentumConfig, MomentumPosition, MomentumTrade
@@ -48,8 +48,10 @@ class MomentumTradingEngine:
     def __init__(
         self, rest_client, momentum_repo, risk_repo, kill_switch_repo, execution, risk_settings,
         strategy_settings_repo=None, capital_allocation_repo=None, capital_allocation_key=None,
+        excursion_repo=None,
     ) -> None:
         self.rest = rest_client
+        self.excursion_repo = excursion_repo  # optional MFE/MAE tracking (Fase 18)
         self.momentum_repo = momentum_repo
         self.risk_repo = risk_repo
         self.kill_switch_repo = kill_switch_repo
@@ -96,7 +98,10 @@ class MomentumTradingEngine:
         tickers = await self.rest.get_24h_tickers()
         return rank_by_momentum(tickers, config.min_quote_volume, exclude=exclude, top_n=config.top_n)
 
-    async def run_once_for_symbol(self, config: MomentumConfig, symbol: str, symbol_rules, momentum_score: float) -> dict:
+    async def run_once_for_symbol(
+        self, config: MomentumConfig, symbol: str, symbol_rules, momentum_score: float,
+        price_change_pct: float | None = None,
+    ) -> dict:
         account_id = config.account_id
         account = await self.risk_repo.get_account_state(account_id)
         if account is None:
@@ -106,20 +111,34 @@ class MomentumTradingEngine:
         if open_position is not None:
             return await self._handle_open_position(config, symbol, open_position, account_id)
 
-        return await self._handle_no_open_position(config, symbol, symbol_rules, momentum_score, account, account_id)
+        return await self._handle_no_open_position(config, symbol, symbol_rules, momentum_score, account, account_id,
+                                                   price_change_pct)
 
     async def _handle_open_position(self, config: MomentumConfig, symbol: str, position: MomentumPosition, account_id: str) -> dict:
         live_position = await self.execution.get_position(symbol)
         if live_position.position_amt != 0:
+            if self.excursion_repo is not None:
+                await self.excursion_repo.track(account_id, symbol, position.side, live_position.mark_price)
             return {"action": "POSITION_STILL_OPEN", "side": position.side, "entry_price": position.entry_price}
 
         stop_status = await self.execution.get_order_status(symbol, position.stop_order_id)
         trailing_status = await self.execution.get_order_status(symbol, position.trailing_order_id)
+        # The profit leg in trailing_order_id is a trailing stop (TRAILING
+        # mode) or a fixed take-profit (BRACKET mode). Trust the filled
+        # order's own type first, so positions opened before a mode switch
+        # keep their real label; fall back to the configured mode.
+        leg_type = (getattr(trailing_status, "type", "") or "").upper()
+        if "TRAILING" in leg_type:
+            profit_exit_reason = "TRAILING_STOP"
+        elif "TAKE_PROFIT" in leg_type:
+            profit_exit_reason = "TAKE_PROFIT"
+        else:
+            profit_exit_reason = "TAKE_PROFIT" if config.exit_mode == "BRACKET" else "TRAILING_STOP"
 
         if stop_status.status == "FILLED":
             filled_order, leftover_order_id, exit_reason = stop_status, position.trailing_order_id, "STOP"
         elif trailing_status.status == "FILLED":
-            filled_order, leftover_order_id, exit_reason = trailing_status, position.stop_order_id, "TRAILING_STOP"
+            filled_order, leftover_order_id, exit_reason = trailing_status, position.stop_order_id, profit_exit_reason
         else:
             # Never fabricate a price - same principle as ShadowTradingEngine.
             await self.momentum_repo.close_position(account_id, symbol)
@@ -150,7 +169,12 @@ class MomentumTradingEngine:
             confluence_score=position.confluence_score, momentum_score=position.momentum_score,
             reasons=position.reasons,
         )
+        excursion = (None, None)
+        if self.excursion_repo is not None:
+            excursion = await self.excursion_repo.compute(account_id, symbol, filled_order.avg_price)
         await self.momentum_repo.record_trade(trade)
+        if self.excursion_repo is not None:
+            await self.excursion_repo.stamp_last_trade(account_id, symbol, *excursion)
         await self.momentum_repo.close_position(account_id, symbol)
         await self._update_exposure(account_id, config.interval)
         account = await self.risk_repo.record_trade_outcome(account_id, trade.net_pnl)
@@ -164,6 +188,7 @@ class MomentumTradingEngine:
 
     async def _handle_no_open_position(
         self, config: MomentumConfig, symbol: str, symbol_rules, momentum_score: float, account, account_id: str,
+        price_change_pct: float | None = None,
     ) -> dict:
         klines = await self.rest.get_klines(symbol, config.interval, limit=config.candle_limit)
         df = klines_to_closed_dataframe(klines)
@@ -225,11 +250,22 @@ class MomentumTradingEngine:
             return {"action": "NO_SIGNAL", "confluence_score": confluence.confluence_score}
 
         side = confluence.decision
+        if config.require_direction_alignment and price_change_pct is not None and (
+            (side == "LONG" and price_change_pct < 0) or (side == "SHORT" and price_change_pct > 0)
+        ):
+            return {"action": "DIRECTION_MISALIGNED", "side": side, "price_change_pct": price_change_pct,
+                    "confluence_score": confluence.confluence_score}
         reference_price = float(latest_closed["close"])
         raw_stop_price = compute_stop(reference_price, snapshot.atr_14, side, config.stop_atr_multiple)
         if raw_stop_price is None:
             return {"action": "NO_STOP_AVAILABLE", "confluence_score": confluence.confluence_score}
         stop_price = round_down_to_step(raw_stop_price, symbol_rules.tick_size)
+
+        if config.exit_mode == "BRACKET":
+            return await self._open_fixed_bracket(
+                config, symbol, symbol_rules, side, reference_price, raw_stop_price, stop_price, snapshot,
+                signals, confluence, momentum_score, latest_closed, account, account_id,
+            )
 
         # Fase 17j: activation/callback distances scale with THIS symbol's
         # own ATR%, not one fixed percentage for every candidate - see
@@ -287,5 +323,52 @@ class MomentumTradingEngine:
         await self._update_exposure(account_id, config.interval)
         return {
             "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price,
+            "quantity": position.quantity, "confluence_score": confluence.confluence_score,
+        }
+
+    async def _open_fixed_bracket(
+        self, config: MomentumConfig, symbol: str, symbol_rules, side: str, reference_price: float,
+        raw_stop_price: float, stop_price: float, snapshot, signals, confluence, momentum_score: float,
+        latest_closed, account, account_id: str,
+    ) -> dict:
+        """BRACKET exit mode: same stop, fixed take-profit instead of the
+        trailing leg. The take-profit order id is stored in the position's
+        trailing_order_id column (it is "the profit-taking leg" either way),
+        so reconciliation needs no schema change."""
+        raw_tp = compute_take_profit(reference_price, raw_stop_price, side, config.take_profit_r_multiple)
+        take_profit_price = round_down_to_step(raw_tp, symbol_rules.tick_size)
+        proposal = TradeProposal(
+            symbol=symbol, side=side, entry_price=reference_price, stop_price=stop_price,
+            take_profit_price=take_profit_price, leverage=config.leverage,
+        )
+        risk_decision = self.risk_engine.evaluate(proposal, account, symbol_rules)
+        await self.risk_repo.insert_risk_event(account_id, symbol, side, risk_decision)
+        if risk_decision.decision != "PASS":
+            return {"action": "ENTRY_BLOCKED", "reasons": risk_decision.reasons, "confluence_score": confluence.confluence_score}
+
+        quantity = risk_decision.position_size.quantity
+        try:
+            brackets = await self.execution.open_bracket_position(
+                symbol, side, quantity, stop_price, take_profit_price, config.leverage,
+            )
+        except BracketOpenError as exc:
+            return {
+                "action": "BRACKET_FAILED", "flattened": exc.flattened, "error": str(exc),
+                "confluence_score": confluence.confluence_score,
+            }
+
+        reasons = [r for sig in signals for r in sig.reasons if sig.signal != "NO_TRADE"]
+        entry_price = brackets.entry.avg_price or apply_slippage(reference_price, side, is_entry=True, slippage_pct=0.0)
+        position = MomentumPosition(
+            side=side, entry_time=latest_closed["close_time"], entry_price=entry_price,
+            quantity=brackets.entry.executed_qty or quantity,
+            stop_order_id=brackets.stop.order_id, trailing_order_id=brackets.take_profit.order_id,
+            stop_price=stop_price, risk_amount=risk_decision.position_size.risk_amount,
+            confluence_score=confluence.confluence_score, momentum_score=momentum_score, reasons=reasons,
+        )
+        await self.momentum_repo.open_position(account_id, symbol, position)
+        await self._update_exposure(account_id, config.interval)
+        return {
+            "action": "ENTRY_OPENED", "side": side, "entry_price": entry_price, "take_profit_price": take_profit_price,
             "quantity": position.quantity, "confluence_score": confluence.confluence_score,
         }

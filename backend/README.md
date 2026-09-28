@@ -3291,6 +3291,69 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Métricas da Fase 18 (pesquisa de estratégias com dados reais + camada de IA NVIDIA)
+
+Pedido do usuário: auditoria completa focada em lucratividade no BingX,
+breakeven/trailing no Shadow, mais estratégias, IA para antecipar movimentos,
+tudo visível no dashboard.
+
+**Como foi medido.** `aegis/research/vectorized.py` reproduz as regras de
+produção barra a barra (`tests/test_research_parity.py` garante que cada
+sinal e cada decisão de confluência são idênticos a `evaluate_*`/
+`combine_signals`). Dados: 35 pares cripto do BingX com ≥ US$10M/dia
+(1h, dez/2024–set/2026) e 20 pares da Binance (1h por 2 anos, 15m por 1 ano).
+Custos: 0,05% de taxa por lado + slippage. Validação = últimos 40% de cada
+série. Reproduzir: `python scripts/run_strategy_research.py` (grava em
+`strategy_research_runs`, aparece na aba INTELIGÊNCIA).
+
+| Cenário | BingX 1h (R/trade, total · validação) | Binance 1h | Binance 15m |
+|---|---|---|---|
+| Antiga: TP+BO+MR, stop 2 ATR, alvo 2R | +0,017 · +0,045 | +0,051 · −0,003 | −0,145 · −0,180 |
+| **Nova: +DONCHIAN_TREND, alvo 3R** | **+0,057 · +0,071** | **+0,114 · +0,078** | −0,139 · −0,163 |
+| Nova + breakeven em +0,75R | +0,027 · +0,024 | +0,064 · +0,010 | −0,119 · −0,167 |
+| Nova + breakeven em +0,5R | +0,021 · +0,035 | +0,037 · +0,002 | −0,123 · −0,163 |
+| Nova + trailing 3 ATR sem alvo | +0,018 · +0,040 | +0,054 · +0,011 | −0,125 · −0,177 |
+| Momentum antigo (trailing 1,33 ATR) | −0,037 · −0,022 | — | — |
+| **Momentum novo (alvo 2R, direção alinhada)** | **+0,014 · +0,020** | — | — |
+
+O que mudou em produção:
+- **15m eliminado.** Com stop de 2 ATR no 15m, taxa+slippage custam ~0,3R por
+  trade; nenhuma combinação testada (10 estratégias × 4 filtros × 5 saídas)
+  foi positiva. `SPECULATIVE_INTERVAL` e `MOMENTUM_INTERVAL` agora são `1h`.
+- **DONCHIAN_TREND** (rompimento do canal de 20 barras a favor da EMA200 com
+  ADX ≥ 25) entrou na votação; alvo do Shadow/Paper 2R → 3R
+  (`STRATEGY_TAKE_PROFIT_R_MULTIPLE`).
+- **Breakeven e trailing NÃO foram aplicados no Shadow.** Nos 43 trades reais,
+  22 de 30 perdedores chegaram a +0,5R antes do stop — mas em anos de
+  histórico o breakeven zera mais vencedores do que salva perdedores.
+- **Momentum:** saída fixa 2R (`MOMENTUM_EXIT_MODE=BRACKET`) no lugar do
+  trailing apertado, e só opera na direção do movimento de 24h
+  (`MOMENTUM_REQUIRE_DIRECTION_ALIGNMENT`). Continua perto do empate — é o
+  motor com menos evidência.
+- **Shadow BingX calcula sinais com candles do próprio BingX**
+  (`RestCandleSource`) e passou a receber derivativos/liquidações da Binance
+  (antes o LIQUIDATION_SQUEEZE se abstinha sempre no BingX).
+- **Scanner:** contratos sintéticos de ações/índices/forex do BingX
+  (`NCSK`/`NCSI`/`NCFX`, além de `NCCO`) agora são filtrados — o BingX rejeita
+  ordem neles (101414).
+- **MFE/MAE ao vivo:** `best_price`/`worst_price` nas posições (mark price a
+  cada ciclo) e `mfe_r`/`mae_r` em cada trade fechado.
+
+**IA (NVIDIA NIM, `scripts/run_ai_engine.py`, fora do caminho de ordens):**
+lê notícias (sentimento, magnitude, tipo de evento, resumo em PT-BR — o
+status de notícias por ativo passa a usar a leitura da IA), escreve um
+briefing por ativo a cada hora e revisa cada trade fechado. Cadeia de modelos
+com cooldown porque o plano gratuito devolve 503/timeout com frequência
+(medido: nemotron-3-super ~5s, gemma-4-31b 4–18s, gpt-oss-20b 22–31s).
+Os votos da IA **não** entram na confluência: um LLM não pode ser testado
+no histórico sem vazamento de futuro (foi treinado com dados posteriores).
+
+**Radar de listagens (Binance/Upbit/OKX):** só alerta. Estudo de evento em 437
+anúncios: +20% médio (mediana +9–11%) já acontece entre 5 min antes do
+anúncio e a primeira entrada possível para um robô por consulta; depois disso
+a mediana é ~0 em 1h e −3% em 4h (Upbit KRW). Seguir tweets tem o mesmo
+problema de latência, e a API de leitura do X é paga — não implementado.
+
 ## Métricas da Fase 17 (auditoria completa + troca de conta demo/real da BingX pelo dashboard)
 
 - Auditoria pedida pelo usuário ("verifique problemas e corrija tudo")

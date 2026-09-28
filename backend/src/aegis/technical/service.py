@@ -56,6 +56,10 @@ class TechnicalSnapshot:
     volatility_percentile_100: float | None = None
     distance_from_ema200_pct: float | None = None
     distance_from_vwap_pct: float | None = None
+    # Highest high / lowest low of the 20 bars BEFORE the latest one - the
+    # channel the latest close is compared against (DONCHIAN_TREND).
+    donchian_20_high: float | None = None
+    donchian_20_low: float | None = None
 
     market_structure_trend: str = "UNKNOWN"
     last_swing_high: float | None = None
@@ -112,6 +116,10 @@ def compute_snapshot(symbol: str, interval: str, df: pd.DataFrame) -> TechnicalS
     dist_ema200 = None if ema200_last in (None, 0) else (last_close - ema200_last) / ema200_last * 100
     dist_vwap = None if vwap_last in (None, 0) else (last_close - vwap_last) / vwap_last * 100
 
+    prior = df.iloc[-21:-1]
+    donchian_high = float(prior["high"].max()) if len(prior) == 20 else None
+    donchian_low = float(prior["low"].min()) if len(prior) == 20 else None
+
     structure = analyze_market_structure(df)
     quality = "OK" if len(df) >= MIN_CANDLES_FOR_FULL_HISTORY else "PARTIAL_HISTORY"
 
@@ -143,6 +151,8 @@ def compute_snapshot(symbol: str, interval: str, df: pd.DataFrame) -> TechnicalS
         volatility_percentile_100=_last_or_none(vol_pct100),
         distance_from_ema200_pct=dist_ema200,
         distance_from_vwap_pct=dist_vwap,
+        donchian_20_high=donchian_high,
+        donchian_20_low=donchian_low,
         market_structure_trend=structure.trend,
         last_swing_high=structure.last_swing_high,
         last_swing_low=structure.last_swing_low,

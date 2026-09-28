@@ -71,6 +71,7 @@ _SUPERVISED_SCRIPTS = [
     "run_bingx_momentum_trading.py",
     "run_daily_reset.py",
     "run_dashboard.py",
+    "run_ai_engine.py",
 ]
 
 _POLL_INTERVAL_SECONDS = 5.0

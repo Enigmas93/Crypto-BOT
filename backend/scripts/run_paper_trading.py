@@ -81,13 +81,16 @@ async def _main() -> None:
         rules_by_symbol = await rest.get_symbol_rules()
         await risk_repo.initialize_account_state(settings.paper_account_id, starting_equity=_STARTING_EQUITY)
 
+        bracket = dict(stop_atr_multiple=settings.strategy_stop_atr_multiple,
+                       take_profit_r_multiple=settings.strategy_take_profit_r_multiple)
         configs = [
             PaperTradingConfig(symbol=symbol, interval=_CORE_INTERVAL, account_id=settings.paper_account_id,
-                                candle_limit=settings.paper_trading_candle_limit)
+                                candle_limit=settings.paper_trading_candle_limit, **bracket)
             for symbol in settings.core_symbols
         ] + [
             PaperTradingConfig(symbol=symbol, interval=settings.speculative_interval,
-                                account_id=settings.paper_account_id, candle_limit=settings.paper_trading_candle_limit)
+                                account_id=settings.paper_account_id, candle_limit=settings.paper_trading_candle_limit,
+                                **bracket)
             for symbol in settings.speculative_symbol_list
         ]
         log_event(
