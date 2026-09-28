@@ -505,3 +505,19 @@ async def test_intelligence_excursions_shape(client):
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body["closed"], list) and isinstance(body["open"], list)
+
+
+@pytest.mark.asyncio
+async def test_push_config_and_subscription_roundtrip(client):
+    cfg = (await client.get("/api/push/config")).json()
+    assert "public_key" in cfg and "enabled" in cfg
+    endpoint = "https://push.example.test/sub/aegis-test-roundtrip"
+    body = {"endpoint": endpoint, "keys": {"p256dh": "BPk", "auth": "au"}}
+    assert (await client.post("/api/push/subscribe", json=body)).status_code == 200
+    assert (await client.post("/api/push/unsubscribe", json={"endpoint": endpoint})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_push_subscribe_rejects_non_https_endpoint(client):
+    resp = await client.post("/api/push/subscribe", json={"endpoint": "http://x", "keys": {"p256dh": "a", "auth": "b"}})
+    assert resp.status_code == 400

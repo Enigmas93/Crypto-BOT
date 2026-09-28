@@ -3291,6 +3291,25 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Fase 20 — notificações push (Web Push / VAPID)
+
+- Botão 🔔 no app: ativa notificações no aparelho (no iPhone, só com o app
+  instalado na tela inicial, iOS 16.4+). Cada aparelho vira uma linha em
+  `push_subscriptions`; as expiradas (404/410 do serviço de push) são apagadas.
+- Notifica apenas **entradas** (ativo + direção + preço + conta) e
+  **fechamentos** (ativo + direção + lucro/perda em US$ + R + motivo + conta),
+  em todas as contas. Disparado pelos 5 scripts de trading via
+  `WebPushNotifier.notify_trade_result` — em segundo plano, nunca atrasa o
+  ciclo de ordens; falha de envio só gera log.
+- Chaves VAPID em `backend/.env` (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/
+  `VAPID_SUBJECT`). Trocar as chaves invalida todas as inscrições.
+- Testado de ponta a ponta: app da Vercel → túnel → backend → serviço de push
+  real (Microsoft WNS e Apple) → notificação exibida pelo service worker.
+- Vercel: os dois projetos ligados ao repositório (`crypto-bot-bingx` e
+  `aegis-quant`) usam **Root Directory = `frontend`**; `.vercelignore` na raiz
+  garante que só o PWA é enviado (antes o repositório inteiro, incluindo o
+  código do backend, estava sendo servido publicamente).
+
 ## Fase 19 — acesso pelo celular (PWA na Vercel + túnel ngrok)
 
 - O frontend saiu de `backend/src/aegis/api/static/` para `frontend/` (fonte

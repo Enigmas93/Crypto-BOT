@@ -33,6 +33,7 @@
       <span class="badge">AMBIENTE: TESTNET</span>
     </div>
     <div class="topbar-actions">
+      <button class="icon-btn" id="push-btn" title="Notificações de entradas e fechamentos" aria-label="Notificações">&#128276;</button>
       <button class="icon-btn" id="mobile-access-btn" title="Acessar pelo celular" aria-label="Acessar pelo celular">&#128241;</button>
       <button class="icon-btn text-btn" id="logout-btn" title="Sair (esquecer token neste aparelho)">SAIR</button>
       <div class="icon-btn" id="theme-toggle" title="Alternar tema claro/escuro">&#9789;</div>
@@ -367,6 +368,23 @@
     <button type="submit" class="primary-btn" id="login-submit">Entrar</button>
     <div class="settings-status" id="login-status" role="status"></div>
   </form>
+</div>
+
+<!-- ============ NOTIFICAÇÕES (Web Push) ============ -->
+<div class="overlay" id="push-overlay" hidden>
+  <div class="overlay-card">
+    <h2 class="overlay-title">Notificações</h2>
+    <p class="settings-note">Aviso neste aparelho a cada <b>entrada</b> (ativo e direção) e a cada <b>fechamento</b>
+      (ativo, direção e lucro ou perda em dólares), em todas as contas.</p>
+    <div class="risk-row"><span class="rl">Este aparelho</span><span class="rv" id="push-device-status">—</span></div>
+    <div class="risk-row"><span class="rl">Aparelhos inscritos</span><span class="rv" id="push-count">—</span></div>
+    <div class="explain-box" id="push-hint" hidden></div>
+    <button class="primary-btn" id="push-enable" type="button">Ativar notificações</button>
+    <button class="primary-btn" id="push-test" type="button" hidden>Enviar notificação de teste</button>
+    <button class="secondary-btn" id="push-disable" type="button" hidden>Desativar neste aparelho</button>
+    <div class="settings-status" id="push-status" role="status"></div>
+    <button class="secondary-btn" id="push-close" type="button">Fechar</button>
+  </div>
 </div>
 
 <!-- ============ ACESSO PELO CELULAR ============ -->

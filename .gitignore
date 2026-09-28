@@ -26,5 +26,9 @@ Thumbs.db
 *.log
 backend/logs/
 
+# Vercel CLI project link / pulled env
+.vercel/
+.env.local
+
 # Downloaded kline history for scripts/run_strategy_research.py
 .research_cache/

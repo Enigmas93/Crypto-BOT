@@ -1256,6 +1256,7 @@ async function submitLogin(ev) {
     el("login-overlay").hidden = true;
     el("login-token").value = "";
     refresh();
+    syncPushSubscription();
   } catch (e) {
     store(STORE.server, previous.server || server);
     if (e instanceof AuthError) {
@@ -1303,6 +1304,129 @@ async function openMobileAccess() {
   }
 }
 
+// -- Web Push (Fase 20) -------------------------------------------------------
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+function b64UrlToBytes(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+function sameKey(sub, publicKey) {
+  const current = sub && sub.options && sub.options.applicationServerKey;
+  if (!current) return false;
+  const a = new Uint8Array(current), b = b64UrlToBytes(publicKey);
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function sendSubscription(sub) {
+  const r = await apiFetch("/api/push/subscribe", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sub.toJSON()),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+function setPushStatus(text, cls = "") {
+  el("push-status").textContent = text;
+  el("push-status").className = `settings-status ${cls}`;
+}
+
+async function renderPushPanel() {
+  const hint = el("push-hint");
+  hint.hidden = true;
+  let config = { enabled: false, subscriptions: 0 };
+  try { config = await getJSON("/api/push/config"); } catch (e) { /* shown below as unavailable */ }
+  el("push-count").textContent = config.subscriptions ?? "—";
+  const sub = await currentSubscription().catch(() => null);
+  const active = !!sub && Notification.permission === "granted";
+  el("push-device-status").innerHTML = active ? '<span class="up">ATIVAS</span>'
+    : Notification.permission === "denied" ? '<span class="down">BLOQUEADAS</span>' : "desativadas";
+  el("push-btn").classList.toggle("on", active);
+  el("push-enable").hidden = active;
+  el("push-test").hidden = !active;
+  el("push-disable").hidden = !active;
+
+  let message = "";
+  if (!config.enabled) message = "O servidor ainda não tem chaves VAPID configuradas.";
+  else if (isIos() && !isStandalone()) message = "No iPhone as notificações só funcionam com o app instalado: toque em Compartilhar → Adicionar à Tela de Início, abra pelo ícone e ative aqui (iOS 16.4 ou mais novo).";
+  else if (!pushSupported()) message = "Este navegador não suporta notificações push.";
+  else if (Notification.permission === "denied") message = "As notificações foram bloqueadas para este site. Libere nas configurações do navegador/celular e tente de novo.";
+  if (message) {
+    hint.textContent = message;
+    hint.hidden = false;
+    el("push-enable").disabled = true;
+  } else {
+    el("push-enable").disabled = false;
+  }
+}
+
+async function enablePush() {
+  setPushStatus("Ativando…");
+  try {
+    const config = await getJSON("/api/push/config");
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") { setPushStatus("Permissão negada.", "down"); await renderPushPanel(); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && !sameKey(sub, config.public_key)) { await sub.unsubscribe(); sub = null; }
+    sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64UrlToBytes(config.public_key) });
+    await sendSubscription(sub);
+    setPushStatus("Notificações ativadas neste aparelho.", "up");
+  } catch (e) {
+    if (!(e instanceof AuthError)) setPushStatus(`Não foi possível ativar: ${e.message}`, "down");
+  }
+  await renderPushPanel();
+}
+
+async function disablePush() {
+  try {
+    const sub = await currentSubscription();
+    if (sub) {
+      await apiFetch("/api/push/unsubscribe", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+      await sub.unsubscribe();
+    }
+    setPushStatus("Desativadas neste aparelho.");
+  } catch (e) {
+    if (!(e instanceof AuthError)) setPushStatus(`Erro: ${e.message}`, "down");
+  }
+  await renderPushPanel();
+}
+
+async function testPush() {
+  setPushStatus("Enviando…");
+  try {
+    const r = await apiFetch("/api/push/test", { method: "POST" });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    setPushStatus(`Enviada para ${body.sent} aparelho(s)${body.failed ? `, ${body.failed} falha(s)` : ""}.`, body.sent ? "up" : "down");
+  } catch (e) {
+    if (!(e instanceof AuthError)) setPushStatus(`Erro: ${e.message}`, "down");
+  }
+}
+
+async function syncPushSubscription() {
+  // Re-registers this device's subscription after login, so the backend
+  // keeps delivering even if its table was reset or the tunnel URL changed.
+  try {
+    if (!pushSupported() || Notification.permission !== "granted") return;
+    const sub = await currentSubscription();
+    if (sub) await sendSubscription(sub);
+    el("push-btn").classList.toggle("on", !!sub);
+  } catch (e) { /* best effort */ }
+}
+
+function openTabFromHash() {
+  const tab = location.hash.slice(1);
+  if (qsa(".tab-btn").some((b) => b.dataset.tab === tab)) setActiveTab(tab);
+}
+
 function applyHashConfig() {
   // "#server=https://..." (link/QR from the PC dashboard) pre-fills the tunnel URL.
   const match = location.hash.match(/^#server=(.+)$/);
@@ -1322,6 +1446,7 @@ async function boot() {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     refresh();
+    syncPushSubscription();
   } catch (e) {
     showLogin(fromLink ? "" : (stored(STORE.token) ? "Não consegui entrar. Confira o servidor e o token." : ""));
   }
@@ -1338,6 +1463,21 @@ function initTabs() {
   el("logout-btn").addEventListener("click", logout);
   el("mobile-access-btn").addEventListener("click", openMobileAccess);
   el("mobile-close").addEventListener("click", () => { el("mobile-overlay").hidden = true; });
+  el("push-btn").addEventListener("click", () => { el("push-overlay").hidden = false; setPushStatus(""); renderPushPanel(); });
+  el("push-close").addEventListener("click", () => { el("push-overlay").hidden = true; });
+  el("push-enable").addEventListener("click", enablePush);
+  el("push-disable").addEventListener("click", disablePush);
+  el("push-test").addEventListener("click", testPush);
+  window.addEventListener("hashchange", openTabFromHash);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "open-url") {
+        const url = new URL(event.data.url);
+        location.hash = url.hash;
+        refresh();
+      }
+    });
+  }
   // Pull fresh data the moment the app comes back to the foreground.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 }

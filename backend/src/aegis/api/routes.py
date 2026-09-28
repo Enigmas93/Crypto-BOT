@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from aegis.api.dependencies import (
@@ -742,6 +742,60 @@ async def get_remote_access(settings: Settings = Depends(get_settings_dep)) -> d
         "pwa_link": f"{pwa}/#server={tunnel_url}" if pwa and tunnel_url else None,
         "token_configured": bool(settings.aegis_api_token),
     }
+
+
+# -- Web Push (Fase 20) ----------------------------------------------------------
+class PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionBody(BaseModel):
+    endpoint: str
+    keys: PushKeys
+
+
+class PushUnsubscribeBody(BaseModel):
+    endpoint: str
+
+
+def _push_repo(pool) -> "PushSubscriptionRepository":
+    from aegis.notifications.webpush import PushSubscriptionRepository
+    return PushSubscriptionRepository(pool)
+
+
+@router.get("/push/config")
+async def get_push_config(settings: Settings = Depends(get_settings_dep), pool=Depends(get_pool)) -> dict:
+    return {"public_key": settings.vapid_public_key or None,
+            "enabled": bool(settings.vapid_public_key and settings.vapid_private_key),
+            "subscriptions": await _push_repo(pool).count()}
+
+
+@router.post("/push/subscribe")
+async def push_subscribe(body: PushSubscriptionBody, request: Request, pool=Depends(get_pool)) -> dict:
+    if not body.endpoint.startswith("https://"):
+        raise HTTPException(status_code=400, detail="endpoint must be an https push service URL")
+    await _push_repo(pool).upsert(body.endpoint, body.keys.p256dh, body.keys.auth,
+                                  request.headers.get("user-agent", ""))
+    return {"ok": True}
+
+
+@router.post("/push/unsubscribe")
+async def push_unsubscribe(body: PushUnsubscribeBody, pool=Depends(get_pool)) -> dict:
+    await _push_repo(pool).delete(body.endpoint)
+    return {"ok": True}
+
+
+@router.post("/push/test")
+async def push_test(settings: Settings = Depends(get_settings_dep), pool=Depends(get_pool)) -> dict:
+    from aegis.notifications.webpush import PushMessage, build_webpush_notifier
+    notifier = build_webpush_notifier(pool, settings)
+    if not notifier.enabled:
+        raise HTTPException(status_code=400, detail="VAPID keys not configured")
+    return await notifier.send(PushMessage(
+        title="🔔 Aegis Quant", body="Notificações ativas: você será avisado a cada entrada e fechamento.",
+        tag="test", url="/#positions",
+    ))
 
 
 # -- intelligence: AI layer, listing radar, research evidence (Fase 18) --------

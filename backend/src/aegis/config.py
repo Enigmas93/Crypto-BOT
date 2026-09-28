@@ -242,13 +242,21 @@ class Settings(BaseSettings):
     # loopback requests without proxy headers are answered (see aegis.api.app).
     aegis_api_token: str = ""
     # Browser origins allowed to call the API cross-origin (the Vercel app).
-    aegis_cors_origins: str = "https://aegis-quant-chi.vercel.app"
-    # Preview deployments of this Vercel team only (not any "aegis-quant*" project).
-    aegis_cors_origin_regex: str = r"https://aegis-quant-[a-z0-9]+-enigmas93s-projects\.vercel\.app"
+    aegis_cors_origins: str = "https://aegis-quant-chi.vercel.app,https://crypto-bot-bingx.vercel.app"
+    # Preview/branch deployments of this Vercel team only (the team slug
+    # suffix can't be claimed by anyone else's project).
+    aegis_cors_origin_regex: str = (
+        r"https://(aegis-quant|crypto-bot-bingx)-[a-z0-9-]+-enigmas93s-projects\.vercel\.app"
+    )
     # Public HTTPS tunnel to this machine's dashboard (scripts/run_tunnel.py).
     # Optional fixed ngrok domain; empty = the account's default dev domain.
     ngrok_domain: str = ""
     pwa_url: str = ""
+
+    # Web Push / VAPID (Fase 20) - trade notifications on the phone -----------
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:admin@example.com"
 
     # Logging ---------------------------------------------------------------
     log_level: str = "INFO"

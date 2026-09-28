@@ -55,6 +55,7 @@ from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa
 from aegis.momentum.engine import MomentumTradingEngine  # noqa: E402
 from aegis.momentum.models import MomentumConfig  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
+from aegis.notifications.webpush import build_webpush_notifier  # noqa: E402
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXRestError  # noqa: E402
 
 _LOG = get_logger("scripts.run_bingx_momentum_trading")
@@ -84,6 +85,8 @@ async def _main() -> None:
     configure_logging(settings.log_level)
 
     pool = await create_pool(settings)
+
+    pusher = build_webpush_notifier(pool, settings)  # phone trade alerts (Fase 20)
     momentum_repo = MomentumRepository(pool)
     risk_repo = RiskRepository(pool)
     strategy_settings_repo = StrategySettingsRepository(pool)
@@ -203,6 +206,7 @@ async def _main() -> None:
                             log_event(_LOG, "transient_network_error", level=30, stage="run_once_for_symbol",
                                       symbol=symbol, error=str(exc))
                             continue
+                        pusher.notify_trade_result(account_id, symbol, result)
                         action = result.pop("action")
                         if action == "POSITION_CLOSED":
                             trade = result.pop("trade")

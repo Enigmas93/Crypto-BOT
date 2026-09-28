@@ -47,6 +47,7 @@ from aegis.db.risk_repository import RiskRepository  # noqa: E402
 from aegis.db.strategy_settings_repository import StrategySettingsRepository  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
+from aegis.notifications.webpush import build_webpush_notifier  # noqa: E402
 from aegis.paper.engine import PaperTradingEngine  # noqa: E402
 from aegis.paper.models import PaperTradingConfig  # noqa: E402
 from aegis.providers.binance.rest_client import BinanceFuturesRestClient  # noqa: E402
@@ -62,6 +63,7 @@ async def _main() -> None:
 
     rest = BinanceFuturesRestClient(testnet=settings.binance_testnet)
     pool = await create_pool(settings)
+    pusher = build_webpush_notifier(pool, settings)  # phone trade alerts (Fase 20)
     candle_repo = CandleRepository(pool)
     paper_repo = PaperRepository(pool)
     risk_repo = RiskRepository(pool)
@@ -107,6 +109,7 @@ async def _main() -> None:
                     log_event(_LOG, "unknown_symbol_rules", level=30, symbol=config.symbol)
                     continue
                 result = await engine.run_once(config, symbol_rules)
+                pusher.notify_trade_result(config.account_id, config.symbol, result)
                 action = result.pop("action")
                 if action == "POSITION_CLOSED":
                     trade = result.pop("trade")

@@ -1,0 +1,5 @@
+# Only the static PWA is deployed to Vercel - never the backend, data or secrets.
+/*
+!/frontend
+/frontend/.vercel
+/frontend/.env*

@@ -54,6 +54,7 @@ from aegis.db.strategy_settings_repository import StrategySettingsRepository  # 
 from aegis.execution.bingx_session import BingxCredentialsNotConfigured, BingxSessionManager  # noqa: E402
 from aegis.logging_utils import configure_logging, get_logger, log_event  # noqa: E402
 from aegis.notifications.telegram import TelegramNotifier  # noqa: E402
+from aegis.notifications.webpush import build_webpush_notifier  # noqa: E402
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXRestError  # noqa: E402
 from aegis.shadow.engine import ShadowTradingEngine  # noqa: E402
 from aegis.shadow.models import ShadowTradingConfig  # noqa: E402
@@ -82,6 +83,8 @@ async def _main() -> None:
     configure_logging(settings.log_level)
 
     pool = await create_pool(settings)
+
+    pusher = build_webpush_notifier(pool, settings)  # phone trade alerts (Fase 20)
     derivatives_repo = DerivativesRepository(pool)
     liquidation_repo = LiquidationRepository(pool)
     shadow_repo = ShadowRepository(pool)
@@ -179,6 +182,7 @@ async def _main() -> None:
                         # symbol is simply retried next cycle.
                         log_event(_LOG, "transient_network_error", level=30, symbol=config.symbol, error=str(exc))
                         continue
+                    pusher.notify_trade_result(config.account_id, config.symbol, result)
                     action = result.pop("action")
                     if action == "POSITION_CLOSED":
                         trade = result.pop("trade")
