@@ -317,3 +317,77 @@ tbody tr.clickable:hover { cursor: pointer; }
 .settings-status { font-size: 11px; margin-left: 10px; font-family: 'JetBrains Mono'; }
 .settings-status.up { color: var(--green); }
 .settings-status.down { color: var(--red); }
+
+/* -- remote access: login + "abrir no celular" (Fase 19) ------------------ */
+[hidden] { display: none !important; }
+.overlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 7, 8, 0.86); backdrop-filter: blur(4px); padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top, 0px)); padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+.overlay-card {
+  width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto; background: var(--panel);
+  border: 1px solid var(--border); border-top: 2px solid var(--accent); padding: 20px; box-shadow: var(--shadow);
+}
+.overlay-title { font-size: 12px; margin: 0 0 12px; font-family: 'JetBrains Mono'; letter-spacing: .8px; text-transform: uppercase; }
+.field-label { display: block; font-size: 10px; color: var(--text-faint); font-family: 'JetBrains Mono'; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+.primary-btn {
+  width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--accent); background: var(--accent-soft);
+  color: var(--accent); font-family: 'JetBrains Mono'; font-weight: 800; font-size: 12px; letter-spacing: .6px; cursor: pointer;
+}
+.primary-btn:hover, .primary-btn:focus-visible { background: var(--accent); color: var(--bg); outline: none; }
+#login-status { display: block; margin: 10px 0 0; min-height: 16px; }
+.qr { background: #fff; padding: 10px; width: 220px; max-width: 100%; margin: 0 auto 14px; }
+.qr svg { display: block; width: 100%; height: auto; }
+.mono-wrap { font-size: 11px; word-break: break-all; text-align: right; max-width: 65%; }
+.steps { font-size: 12px; color: var(--text-dim); line-height: 1.6; padding-left: 18px; margin: 12px 0; }
+.steps code { font-family: 'JetBrains Mono'; font-size: 11px; color: var(--accent); }
+button.icon-btn { font-family: inherit; }
+.icon-btn.text-btn { width: auto; padding: 0 10px; font-family: 'JetBrains Mono'; font-size: 10.5px; font-weight: 800; letter-spacing: .5px; }
+.icon-btn:focus-visible, .tab-btn:focus-visible, .chip:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+/* -- phones ---------------------------------------------------------------- */
+@media (max-width: 760px) {
+  .topbar {
+    padding: 10px 14px; gap: 8px;
+    padding-top: calc(10px + env(safe-area-inset-top, 0px)); border-left-width: 3px;
+  }
+  .brand-mark { width: 30px; height: 30px; font-size: 14px; }
+  .brand-text .tagline, .topbar-mid .badge, .topbar-mid .status-dot { display: none; }
+  .topbar-mid { order: 3; width: 100%; font-size: 10px; }
+  .topbar-actions { gap: 6px; }
+  .icon-btn { width: 36px; height: 36px; }
+  .exchange-toggle button { padding: 8px 9px; font-size: 10px; }
+  .tabbar {
+    position: sticky; top: 0; z-index: 19; padding: 0 8px; padding-top: env(safe-area-inset-top, 0px);
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .tabbar::-webkit-scrollbar { display: none; }
+  .tab-btn { padding: 12px 11px; font-size: 11px; }
+  .main { padding: 12px 12px calc(40px + env(safe-area-inset-bottom, 0px)); }
+  .grid, .grid.g2, .grid.g3, .grid.g4, .grid.g6, .grid.full { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 10px; }
+  .card, .panel { min-width: 0; }
+  .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .kpi-tile { padding: 10px 11px; }
+  .kpi-tile .val { font-size: 16px; overflow-wrap: anywhere; }
+  .panel, .card { padding: 12px; }
+  .card h2 { flex-wrap: wrap; gap: 6px; }
+  .exchange-banner { padding: 12px; gap: 10px; }
+  .exchange-banner .kpi-strip-inline { margin-left: 0 !important; width: 100%; }
+  .brief-grid { grid-template-columns: minmax(0, 1fr); }
+  /* every table scrolls sideways inside its card instead of widening the page */
+  .card table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-scroll table { display: table; }
+  td, th { white-space: nowrap; }
+  td { font-size: 12px; padding: 8px 7px; }
+  .news-summary, .brief-card .bsummary { white-space: normal; }
+  #intel-news td:nth-child(2), #intel-reviews td:last-child { white-space: normal; min-width: 220px; }
+  .log-feed { max-height: 260px; }
+  .settings-form input[type="password"], .settings-form input[type="text"], .overlay input { font-size: 16px; } /* no iOS zoom */
+  .chip { padding: 8px 11px; }
+  .footer { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .section-title { margin: 16px 0 8px; }
+}
+@media (max-width: 380px) {
+  .kpi-strip { grid-template-columns: minmax(0, 1fr); }
+}

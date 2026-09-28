@@ -71,8 +71,30 @@ function fmtDuration(startIso) {
   if (hrs < 24) return `${hrs}h ${mins % 60}m`;
   return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
 }
+// -- remote access (Fase 19): server URL + token live in this device only ----
+// Same page works served by the backend on the PC (server = same origin) or
+// from Vercel on a phone (server = the ngrok tunnel URL).
+const STORE = { server: "aegis-server", token: "aegis-token" };
+function stored(key) { try { return localStorage.getItem(key) || ""; } catch (e) { return ""; } }
+function store(key, value) {
+  try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch (e) { /* private mode */ }
+}
+function apiBase() { return stored(STORE.server).trim().replace(/\/+$/, ""); }
+class AuthError extends Error {}
+
+async function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}), "ngrok-skip-browser-warning": "1" };
+  const token = stored(STORE.token);
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const r = await fetch(apiBase() + path, { ...options, headers });
+  if (r.status === 401) {
+    showLogin("Token ausente ou incorreto.");
+    throw new AuthError("unauthorized");
+  }
+  return r;
+}
 async function getJSON(url) {
-  const r = await fetch(url);
+  const r = await apiFetch(url);
   if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
   return r.json();
 }
@@ -568,7 +590,7 @@ function renderStrategyToggles() {
 
 window.toggleStrategy = async function (strategyId, nextEnabled) {
   try {
-    const r = await fetch(`/api/settings/strategies/${strategyId}`, {
+    const r = await apiFetch(`/api/settings/strategies/${strategyId}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: nextEnabled }),
     });
     if (!r.ok) { alert(`Falha ao alterar estratégia: HTTP ${r.status}`); return; }
@@ -834,7 +856,7 @@ window.saveCapitalAllocation = async function () {
   status.textContent = "Salvando...";
   status.className = "settings-status";
   try {
-    const r = await fetch("/api/settings/capital-allocation", {
+    const r = await apiFetch("/api/settings/capital-allocation", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shadow_bingx_pct: shadowPct / 100, momentum_bingx_pct: momentumPct / 100 }),
     });
@@ -860,7 +882,7 @@ window.saveBingxCredentials = async function () {
   status.textContent = "Validando na BingX...";
   status.className = "settings-status";
   try {
-    const r = await fetch("/api/settings/bingx/credentials", {
+    const r = await apiFetch("/api/settings/bingx/credentials", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }),
     });
@@ -893,7 +915,7 @@ window.switchBingxMode = async function (mode) {
   status.textContent = "Trocando...";
   status.className = "settings-status";
   try {
-    const r = await fetch("/api/settings/bingx/mode", {
+    const r = await apiFetch("/api/settings/bingx/mode", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode, confirm: confirm_ }),
     });
@@ -916,7 +938,7 @@ window.resetKillSwitch = async function (accountId) {
   const note = prompt(`Motivo do reset do Kill Switch para "${accountId}" (obrigatório):`);
   if (!note || !note.trim()) return;
   try {
-    const r = await fetch(`/api/kill-switch/${accountId}/reset`, {
+    const r = await apiFetch(`/api/kill-switch/${accountId}/reset`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }),
     });
     if (!r.ok) { alert(`Falha ao resetar: HTTP ${r.status}`); return; }
@@ -1179,13 +1201,129 @@ async function refreshData() {
   };
 }
 
+let refreshing = false;
 async function refresh() {
+  if (refreshing || !el("login-overlay").hidden || document.hidden) return;
+  refreshing = true;
   try {
     await refreshData();
     renderAll();
     el("last-update").textContent = `ÚLTIMA ATUALIZAÇÃO: ${new Date().toLocaleTimeString("pt-BR")}`;
   } catch (e) {
-    el("last-update").textContent = `ERRO: ${e.message}`;
+    if (!(e instanceof AuthError)) {
+      el("last-update").textContent = e instanceof TypeError
+        ? "SEM CONEXÃO COM O SERVIDOR" : `ERRO: ${e.message}`;
+    }
+  } finally {
+    refreshing = false;
+  }
+}
+
+// -- login / remote access (Fase 19) -----------------------------------------
+function showLogin(message) {
+  const overlay = el("login-overlay");
+  el("login-server").value = stored(STORE.server);
+  el("login-status").textContent = message || "";
+  el("login-status").className = `settings-status ${message ? "down" : ""}`;
+  if (overlay.hidden) {
+    overlay.hidden = false;
+    setTimeout(() => (stored(STORE.server) || location.hostname.endsWith("vercel.app")
+      ? el("login-token") : el("login-server")).focus(), 50);
+  }
+}
+
+async function submitLogin(ev) {
+  ev.preventDefault();
+  const server = el("login-server").value.trim().replace(/\/+$/, "");
+  const token = el("login-token").value.trim();
+  const status = el("login-status");
+  if (server && !/^https:\/\//.test(server) && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(server)) {
+    status.textContent = "Use o endereço https:// do túnel.";
+    status.className = "settings-status down";
+    return;
+  }
+  status.textContent = "Conectando…";
+  status.className = "settings-status";
+  const previous = { server: stored(STORE.server), token: stored(STORE.token) };
+  store(STORE.server, server);
+  store(STORE.token, token);
+  try {
+    const r = await fetch(`${apiBase()}/api/auth/check`, {
+      headers: { Authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "1" },
+    });
+    if (r.status === 401) throw new AuthError("token");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    el("login-overlay").hidden = true;
+    el("login-token").value = "";
+    refresh();
+  } catch (e) {
+    store(STORE.server, previous.server || server);
+    if (e instanceof AuthError) {
+      store(STORE.token, previous.token);
+      status.textContent = "Token incorreto.";
+    } else {
+      status.textContent = "Não consegui falar com o servidor. O PC está ligado e o túnel ativo? A URL está certa?";
+    }
+    status.className = "settings-status down";
+  }
+}
+
+function logout() {
+  store(STORE.token, "");
+  showLogin("Você saiu. Digite o token para entrar de novo.");
+}
+
+async function openMobileAccess() {
+  el("mobile-overlay").hidden = false;
+  const body = el("mobile-access-body");
+  body.innerHTML = `<div class="empty">Carregando…</div>`;
+  try {
+    const info = await getJSON("/api/system/remote-access");
+    const target = info.pwa_link || info.tunnel_url;
+    let qr = "";
+    if (target && window.qrcode) {
+      const code = window.qrcode(0, "M");
+      code.addData(target);
+      code.make();
+      qr = `<div class="qr">${code.createSvgTag({ cellSize: 5, margin: 3, scalable: true })}</div>`;
+    }
+    body.innerHTML = `
+      ${qr || `<div class="explain-box crit">Túnel desligado — o celular não consegue alcançar este PC agora.
+        Ele é iniciado pelo supervisor (scripts/run_tunnel.py).</div>`}
+      <div class="risk-row"><span class="rl">Servidor (túnel)</span><span class="rv mono-wrap">${escapeHtml(info.tunnel_url || "—")}</span></div>
+      <div class="risk-row"><span class="rl">App (Vercel)</span><span class="rv mono-wrap">${escapeHtml(info.pwa_url || "—")}</span></div>
+      <ol class="steps">
+        <li>Aponte a câmera do celular para o QR code.</li>
+        <li>Digite o token (<code>AEGIS_API_TOKEN</code> no <code>backend/.env</code>) — só na primeira vez.</li>
+        <li>Menu do navegador → <b>Adicionar à tela inicial</b> para instalar o app.</li>
+      </ol>
+      ${info.token_configured ? "" : '<div class="explain-box crit">AEGIS_API_TOKEN não configurado: o acesso remoto fica bloqueado.</div>'}`;
+  } catch (e) {
+    if (!(e instanceof AuthError)) body.innerHTML = `<div class="empty">Erro: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function applyHashConfig() {
+  // "#server=https://..." (link/QR from the PC dashboard) pre-fills the tunnel URL.
+  const match = location.hash.match(/^#server=(.+)$/);
+  if (!match) return null;
+  store(STORE.server, decodeURIComponent(match[1]));
+  history.replaceState(null, "", location.pathname);
+  return "server";
+}
+
+async function boot() {
+  const fromLink = applyHashConfig();
+  el("last-update").textContent = "CONECTANDO AO SERVIDOR…";
+  try {
+    const r = await fetch(`${apiBase()}/api/auth/check`, {
+      headers: { "ngrok-skip-browser-warning": "1",
+        ...(stored(STORE.token) ? { Authorization: `Bearer ${stored(STORE.token)}` } : {}) },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    refresh();
+  } catch (e) {
+    showLogin(fromLink ? "" : (stored(STORE.token) ? "Não consegui entrar. Confira o servidor e o token." : ""));
   }
 }
 
@@ -1196,6 +1334,12 @@ function initTabs() {
   qsa(".chart-tabs button").forEach((btn) => btn.addEventListener("click", () => setChartRange(btn.dataset.range)));
   const themeBtn = el("theme-toggle");
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
+  el("login-form").addEventListener("submit", submitLogin);
+  el("logout-btn").addEventListener("click", logout);
+  el("mobile-access-btn").addEventListener("click", openMobileAccess);
+  el("mobile-close").addEventListener("click", () => { el("mobile-overlay").hidden = true; });
+  // Pull fresh data the moment the app comes back to the foreground.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1203,6 +1347,9 @@ document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   const hashTab = location.hash.slice(1);
   setActiveTab(qsa(".tab-btn").some((b) => b.dataset.tab === hashTab) ? hashTab : "bingx");
-  refresh();
+  boot();
   setInterval(refresh, 10000);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => { /* PWA install optional */ });
+  }
 });

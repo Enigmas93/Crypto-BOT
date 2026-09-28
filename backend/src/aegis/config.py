@@ -237,8 +237,25 @@ class Settings(BaseSettings):
         "nvidia/nemotron-3-super-120b-a12b,google/gemma-4-31b-it,openai/gpt-oss-20b,nvidia/nemotron-3-ultra-550b-a55b"
     )
 
+    # Dashboard API access (Fase 19 - mobile/PWA) -----------------------------
+    # Bearer token every /api request must carry. Empty = only direct
+    # loopback requests without proxy headers are answered (see aegis.api.app).
+    aegis_api_token: str = ""
+    # Browser origins allowed to call the API cross-origin (the Vercel app).
+    aegis_cors_origins: str = "https://aegis-quant-chi.vercel.app"
+    # Preview deployments of this Vercel team only (not any "aegis-quant*" project).
+    aegis_cors_origin_regex: str = r"https://aegis-quant-[a-z0-9]+-enigmas93s-projects\.vercel\.app"
+    # Public HTTPS tunnel to this machine's dashboard (scripts/run_tunnel.py).
+    # Optional fixed ngrok domain; empty = the account's default dev domain.
+    ngrok_domain: str = ""
+    pwa_url: str = ""
+
     # Logging ---------------------------------------------------------------
     log_level: str = "INFO"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.aegis_cors_origins.split(",") if o.strip()]
 
     @property
     def nvidia_model_list(self) -> list[str]:

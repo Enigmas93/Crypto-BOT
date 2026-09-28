@@ -72,6 +72,7 @@ _SUPERVISED_SCRIPTS = [
     "run_daily_reset.py",
     "run_dashboard.py",
     "run_ai_engine.py",
+    "run_tunnel.py",
 ]
 
 _POLL_INTERVAL_SECONDS = 5.0

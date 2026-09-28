@@ -39,8 +39,9 @@ async def client(pool):
         testnet=settings.binance_testnet, api_key=settings.binance_api_key, api_secret=settings.binance_api_secret,
     )
     transport = httpx.ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {settings.aegis_api_token}"} if settings.aegis_api_token else {}
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test", headers=headers) as c:
             yield c
     finally:
         await app.state.binance_rest.aclose()

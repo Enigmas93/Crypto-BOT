@@ -22,8 +22,9 @@ Thumbs.db
 # Claude Code agent runtime state (local, not project source)
 .claude/
 
-# Logs
+# Logs (also holds the current tunnel URL)
 *.log
+backend/logs/
 
 # Downloaded kline history for scripts/run_strategy_research.py
 .research_cache/

@@ -3291,6 +3291,28 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Fase 19 — acesso pelo celular (PWA na Vercel + túnel ngrok)
+
+- O frontend saiu de `backend/src/aegis/api/static/` para `frontend/` (fonte
+  única): o backend continua servindo em `http://localhost:8000`, e a mesma
+  pasta é publicada na Vercel (`cd frontend && vercel deploy --prod`) em
+  https://aegis-quant-chi.vercel.app. É um PWA: manifest, service worker (só
+  guarda o "casco" do app, **nunca** respostas da API) e ícones — "Adicionar à
+  tela inicial" instala como app.
+- O celular alcança o PC por `scripts/run_tunnel.py` (no supervisor): um túnel
+  HTTPS do ngrok para a porta 8000. Quando a URL muda, o Telegram recebe o
+  link do app já com o servidor preenchido (`/#server=<url>`). No PC, o botão
+  📱 mostra o QR code desse link.
+- **Toda chamada `/api` exige `Authorization: Bearer <AEGIS_API_TOKEN>`**
+  (`backend/.env`). Sem token configurado, a API só responde a requisições
+  diretas do próprio PC sem cabeçalhos de proxy, e o túnel se recusa a subir.
+  CORS liberado só para o domínio do app e os previews da própria conta Vercel.
+  O token fica salvo apenas no aparelho (localStorage); "SAIR" apaga.
+- Layout responsivo: abaixo de 760px tudo vira uma coluna, tabelas rolam
+  dentro do próprio card, a barra de abas fica fixa no topo, respeita o notch
+  (safe-area) e inputs com 16px (sem zoom no iOS). Verificado em 390×844 nas 9
+  abas sem rolagem horizontal, com login real Vercel → túnel → backend.
+
 ## Métricas da Fase 18 (pesquisa de estratégias com dados reais + camada de IA NVIDIA)
 
 Pedido do usuário: auditoria completa focada em lucratividade no BingX,

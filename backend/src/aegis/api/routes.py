@@ -715,6 +715,35 @@ async def set_capital_allocation(
     return {"allocations": await capital_allocation_repo.get_all_allocations()}
 
 
+# -- mobile / PWA access (Fase 19) ---------------------------------------------
+@router.get("/auth/check")
+async def auth_check() -> dict:
+    """Reaching this handler at all means the auth middleware accepted the token."""
+    return {"ok": True}
+
+
+@router.get("/system/remote-access")
+async def get_remote_access(settings: Settings = Depends(get_settings_dep)) -> dict:
+    """The ngrok tunnel's current public URL (from the agent's local API) and
+    the PWA link that pre-fills it - the dashboard turns this into a QR code."""
+    import httpx
+
+    tunnel_url = None
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            data = (await client.get("http://127.0.0.1:4040/api/tunnels")).json()
+        tunnel_url = next((t["public_url"] for t in data.get("tunnels", [])
+                           if t.get("public_url", "").startswith("https://")), None)
+    except (httpx.HTTPError, ValueError):
+        tunnel_url = None
+    pwa = settings.pwa_url.rstrip("/")
+    return {
+        "tunnel_url": tunnel_url, "pwa_url": pwa or None,
+        "pwa_link": f"{pwa}/#server={tunnel_url}" if pwa and tunnel_url else None,
+        "token_configured": bool(settings.aegis_api_token),
+    }
+
+
 # -- intelligence: AI layer, listing radar, research evidence (Fase 18) --------
 @router.get("/intelligence/summary")
 async def get_intelligence_summary(
