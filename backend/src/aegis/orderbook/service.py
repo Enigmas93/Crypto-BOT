@@ -132,7 +132,7 @@ class OrderBookEngine:
         return [f"{s.lower()}@depth{levels}@100ms" for s in self.settings.symbols]
 
     async def run(self) -> None:
-        self._ws = BinanceFuturesWebSocketClient(streams=self.build_streams(), testnet=self.settings.binance_testnet)
+        self._ws = BinanceFuturesWebSocketClient(streams=self.build_streams(), testnet=False)  # real order book
         snapshot_task = asyncio.create_task(self._snapshot_loop())
         try:
             await self._ws.run(on_message=self.on_depth_message)

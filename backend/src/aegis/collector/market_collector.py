@@ -66,7 +66,12 @@ class MarketCollector:
     ) -> None:
         self.settings = settings
         self.on_event = on_event
-        self.rest = rest_client or BinanceFuturesRestClient(testnet=settings.binance_testnet)
+        # Market data always comes from Binance PRODUCTION public endpoints
+        # (no key needed), even when orders go to testnet: verified 2026-09-28
+        # that testnet klines track real prices but their VOLUME is synthetic
+        # (BTC 1h: 47k BTC on testnet vs 1.9k real), which corrupted every
+        # volume-based signal (breakout volume z-score, VWAP, climax filter).
+        self.rest = rest_client or BinanceFuturesRestClient(testnet=False)
         self.gap_fill_limit = gap_fill_limit
         self._dedup = _DedupState()
         self._ws: BinanceFuturesWebSocketClient | None = None
@@ -162,7 +167,7 @@ class MarketCollector:
     async def run(self) -> None:
         await self.bootstrap()
         streams = self.build_streams()
-        self._ws = BinanceFuturesWebSocketClient(streams=streams, testnet=self.settings.binance_testnet)
+        self._ws = BinanceFuturesWebSocketClient(streams=streams, testnet=False)  # real market, see __init__
         log_event(_LOG, "collector_starting", stream_count=len(streams))
         await self._ws.run(on_message=self._handle_message, on_reconnect=self._gap_fill)
 

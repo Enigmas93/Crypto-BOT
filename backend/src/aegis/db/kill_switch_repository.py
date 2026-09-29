@@ -27,8 +27,10 @@ class KillSwitchState:
 
 
 class KillSwitchRepository:
-    def __init__(self, pool: asyncpg.Pool, notifier=None) -> None:
+    def __init__(self, pool: asyncpg.Pool, notifier=None, push=None) -> None:
         self._pool = pool
+        # Optional WebPushNotifier (Fase 20) - phone alert on trigger.
+        self._push = push
         # Optional TelegramNotifier (aegis.notifications.telegram) - a
         # trigger/reset here is exactly the kind of thing a human needs to
         # know about without having to be watching the dashboard. None is
@@ -86,6 +88,9 @@ class KillSwitchRepository:
             await self._notifier.send(
                 f"\U0001f6d1 KILL SWITCH DISPARADO - conta '{account_id}'\nMotivo(s): {', '.join(reasons)}"
             )
+        if self._push is not None:
+            from aegis.notifications.webpush import kill_switch_message
+            self._push.notify(kill_switch_message(account_id, list(reasons)))
         return self._to_state(row)
 
     async def reset(self, account_id: str, note: str) -> KillSwitchState:

@@ -92,7 +92,7 @@ async def _main() -> None:
     strategy_settings_repo = StrategySettingsRepository(pool)
     capital_allocation_repo = CapitalAllocationRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
+    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier, push=pusher)
     account_repo = BingxAccountRepository(pool, settings.credential_encryption_key)
     session_manager = BingxSessionManager(account_repo, _ACCOUNT_SUFFIX, "scripts.run_bingx_momentum_trading")
     market_rest = BingXFuturesRestClient(testnet=False)  # public market data only, no credentials

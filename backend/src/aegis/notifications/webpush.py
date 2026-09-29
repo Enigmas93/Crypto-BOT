@@ -88,15 +88,78 @@ def close_message(account_id: str, symbol: str, side: str, net_pnl: float, r_mul
     )
 
 
+def unprotected_position_message(account_id: str, symbol: str) -> PushMessage:
+    return PushMessage(
+        title=f"🚨 POSIÇÃO SEM PROTEÇÃO · {_asset(symbol)}",
+        body=f"Stop/alvo não foram criados e o fechamento de emergência falhou. Confira na corretora agora · "
+             f"{ACCOUNT_LABELS.get(account_id, account_id)}",
+        tag=f"unprotected-{account_id}-{symbol}-{int(time.time())}", url="/#positions",
+    )
+
+
+def closed_outside_message(account_id: str, symbol: str) -> PushMessage:
+    return PushMessage(
+        title=f"⚠️ Posição fechada fora do robô · {_asset(symbol)}",
+        body=f"A corretora mostra a posição zerada, mas nem o stop nem o alvo executaram (liquidação ou "
+             f"fechamento manual?) · {ACCOUNT_LABELS.get(account_id, account_id)}",
+        tag=f"reconcile-{account_id}-{symbol}-{int(time.time())}", url="/#positions",
+    )
+
+
+KILL_SWITCH_REASONS = {
+    "MAX_DRAWDOWN_BREACHED": "drawdown máximo atingido",
+    "LOSS_STREAK_HALT_THRESHOLD": "limite de perdas seguidas",
+}
+
+
+def kill_switch_message(account_id: str, reasons: list[str]) -> PushMessage:
+    why = ", ".join(KILL_SWITCH_REASONS.get(r, r) for r in reasons) or "motivo não informado"
+    return PushMessage(
+        title=f"⛔ Robô parado · {ACCOUNT_LABELS.get(account_id, account_id)}",
+        body=f"Kill switch acionado ({why}). Nenhuma nova entrada até você reativar em Risco & Logs.",
+        tag=f"killswitch-{account_id}-{int(time.time())}", url="/#risk",
+    )
+
+
+def process_down_message(script: str, failures: int) -> PushMessage:
+    return PushMessage(
+        title=f"📴 Processo caindo · {PROCESS_LABELS.get(script, script)}",
+        body=f"Caiu {failures} vezes seguidas e está sendo reiniciado automaticamente. Verifique o PC.",
+        tag=f"process-{script}", url="/#risk",
+    )
+
+
+def process_recovered_message(script: str) -> PushMessage:
+    return PushMessage(
+        title=f"✅ Processo normalizado · {PROCESS_LABELS.get(script, script)}",
+        body="Voltou a rodar de forma estável.", tag=f"process-{script}", url="/#risk",
+    )
+
+
+PROCESS_LABELS = {
+    "run_collector.py": "coletor de candles", "run_derivatives_engine.py": "derivativos",
+    "run_liquidation_engine.py": "liquidações", "run_orderbook_engine.py": "orderbook",
+    "run_macro_engine.py": "macro", "run_news_engine.py": "notícias", "run_event_risk_engine.py": "eventos",
+    "run_paper_trading.py": "Paper", "run_shadow_trading.py": "Shadow Binance",
+    "run_bingx_shadow_trading.py": "Shadow BingX", "run_momentum_trading.py": "Momentum Binance",
+    "run_bingx_momentum_trading.py": "Momentum BingX", "run_daily_reset.py": "reset diário",
+    "run_dashboard.py": "painel/API", "run_ai_engine.py": "IA", "run_tunnel.py": "túnel do celular",
+}
+
+
 def message_for_result(account_id: str, symbol: str, result: dict) -> PushMessage | None:
     """Maps an engine's run_once() result to a notification, or None for
-    every action that isn't an entry or a close."""
+    every routine action (no signal, blocked by risk, already open, ...)."""
     action = result.get("action")
     if action == "ENTRY_OPENED":
         return entry_message(account_id, symbol, result.get("side", ""), result.get("entry_price"))
     if action == "POSITION_CLOSED" and result.get("trade") is not None:
         t = result["trade"]
         return close_message(account_id, symbol, t.side, t.net_pnl, t.r_multiple, t.exit_reason)
+    if action == "BRACKET_FAILED" and result.get("flattened") is False:
+        return unprotected_position_message(account_id, symbol)
+    if action == "RECONCILIATION_FAILED":
+        return closed_outside_message(account_id, symbol)
     return None
 
 
@@ -187,10 +250,13 @@ class WebPushNotifier:
 
     def notify_trade_result(self, account_id: str, symbol: str, result: dict) -> None:
         """Fire-and-forget: call with an engine result BEFORE popping its keys."""
+        message = message_for_result(account_id, symbol, result) if self.enabled else None
+        if message is not None:
+            self.notify(message)
+
+    def notify(self, message: PushMessage) -> None:
+        """Fire-and-forget delivery of any message (kill switch, supervisor...)."""
         if not self.enabled:
-            return
-        message = message_for_result(account_id, symbol, result)
-        if message is None:
             return
         task = asyncio.create_task(self._send_logged(message))
         self._tasks.add(task)

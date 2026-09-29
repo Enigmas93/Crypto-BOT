@@ -174,7 +174,9 @@ class LiquidationEngine:
                            squeeze_score=snapshot.squeeze_score)
 
     async def run(self) -> None:
-        self._ws = BinanceFuturesWebSocketClient(streams=[LIQUIDATION_STREAM], testnet=self.settings.binance_testnet)
+        # Real market liquidations - the testnet stream is almost silent (a
+        # 90s-idle reconnect every ~97s was the only thing it produced).
+        self._ws = BinanceFuturesWebSocketClient(streams=[LIQUIDATION_STREAM], testnet=False)
         snapshot_task = asyncio.create_task(self._snapshot_loop())
         try:
             await self._ws.run(on_message=self.on_liquidation_message)

@@ -111,3 +111,55 @@ def test_notifier_disabled_without_private_key():
     notifier = wp.WebPushNotifier(_Repo([]), "", "mailto:x")
     assert not notifier.enabled
     notifier.notify_trade_result("paper", "BTCUSDT", {"action": "ENTRY_OPENED", "side": "LONG"})  # no-op, no loop needed
+
+
+def test_unprotected_position_alerts_only_when_flatten_also_failed():
+    assert wp.message_for_result("shadow_bingx_live", "BTCUSDT", {"action": "BRACKET_FAILED", "flattened": True}) is None
+    m = wp.message_for_result("shadow_bingx_live", "BTCUSDT", {"action": "BRACKET_FAILED", "flattened": False})
+    assert m.title == "🚨 POSIÇÃO SEM PROTEÇÃO · BTC" and "Shadow BingX REAL" in m.body
+
+
+def test_position_closed_outside_the_robot():
+    m = wp.message_for_result("momentum_bingx_demo", "HBARUSDT", {"action": "RECONCILIATION_FAILED"})
+    assert m.title == "⚠️ Posição fechada fora do robô · HBAR"
+
+
+def test_kill_switch_message_translates_reasons():
+    m = wp.kill_switch_message("momentum_bingx_demo", ["LOSS_STREAK_HALT_THRESHOLD"])
+    assert m.title == "⛔ Robô parado · Momentum BingX Demo"
+    assert "limite de perdas seguidas" in m.body and m.url == "/#risk"
+
+
+def test_process_messages_use_friendly_names():
+    assert wp.process_down_message("run_bingx_shadow_trading.py", 3).title == "📴 Processo caindo · Shadow BingX"
+    assert wp.process_recovered_message("run_tunnel.py").title == "✅ Processo normalizado · túnel do celular"
+
+
+class _FakePush:
+    def __init__(self):
+        self.messages = []
+
+    def notify(self, message):
+        self.messages.append(message)
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_trigger_sends_push(pool):
+    import uuid
+
+    from aegis.config import Settings
+    from aegis.db.kill_switch_repository import KillSwitchRepository
+
+    push = _FakePush()
+    repo = KillSwitchRepository(pool, push=push)
+    account = f"test-push-{uuid.uuid4().hex[:8]}"
+    settings = Settings(_env_file=None, max_drawdown=0.10, loss_streak_halt_threshold=8)
+    await repo.check_and_maybe_trigger(account, 100.0, 100.0, 2, settings)  # healthy - no alert
+    assert push.messages == []
+    await repo.check_and_maybe_trigger(account, 100.0, 100.0, 8, settings)  # 8 losses in a row
+    assert len(push.messages) == 1 and push.messages[0].title.startswith("⛔ Robô parado")
+    await repo.check_and_maybe_trigger(account, 100.0, 100.0, 9, settings)  # already halted - no repeat
+    assert len(push.messages) == 1
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM kill_switch_events WHERE account_id = $1", account)
+        await conn.execute("DELETE FROM kill_switch_state WHERE account_id = $1", account)

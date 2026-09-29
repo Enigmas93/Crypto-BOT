@@ -78,9 +78,13 @@ async def _main() -> None:
     risk_repo = RiskRepository(pool)
     strategy_settings_repo = StrategySettingsRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
+    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier, push=pusher)
     execution = BinanceExecutionProvider(rest)
-    engine = MomentumTradingEngine(rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings,
+    # Scanner tickers, klines and correlation from the REAL market; only
+    # orders (`execution`) and contract rules go to testnet - same fix as
+    # BingX's VST, whose 24h stats are synthetic too.
+    market_rest = BinanceFuturesRestClient(testnet=False)
+    engine = MomentumTradingEngine(market_rest, momentum_repo, risk_repo, kill_switch_repo, execution, settings,
                                     strategy_settings_repo=strategy_settings_repo,
                                     excursion_repo=ExcursionRepository(pool, "momentum"))
 
@@ -193,6 +197,7 @@ async def _main() -> None:
     finally:
         await notifier.aclose()
         await rest.aclose()
+        await market_rest.aclose()
         await close_pool(pool)
 
 

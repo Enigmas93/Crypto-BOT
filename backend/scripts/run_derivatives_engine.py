@@ -40,7 +40,7 @@ async def _main() -> None:
     )
 
     pool = await create_pool(settings)
-    rest = BinanceFuturesRestClient(testnet=settings.binance_testnet)
+    rest = BinanceFuturesRestClient(testnet=False)  # real funding/OI - public data, never the testnet's
     engine = DerivativesEngine(
         rest_client=rest,
         derivatives_repo=DerivativesRepository(pool),

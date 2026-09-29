@@ -3291,6 +3291,27 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Fase 21 — auditoria de funcionamento + alertas críticos no celular
+
+- **Dados de mercado da Binance agora vêm sempre da produção** (endpoints
+  públicos): coletor de candles, liquidações, orderbook, funding/OI e o scanner
+  do Momentum Binance. Antes seguiam `BINANCE_TESTNET=true`: a testnet tem
+  preços próximos do real mas **volume sintético** (BTC 1h: 47.299 vs 1.885 real)
+  e quase nenhuma liquidação — os sinais baseados em volume (BREAKOUT, VWAP,
+  filtro de clímax) do Paper/Shadow Binance estavam sendo calculados sobre ruído,
+  e o stream de liquidações reconectava a cada 90s por falta de dados. A flag de
+  testnet vale só para onde as ordens do Shadow/Momentum Binance são enviadas.
+  O upsert de candles passou a sobrescrever também `open`, então o bootstrap de
+  500 barras substituiu os candles antigos da testnet.
+- Novos alertas push: 🚨 posição sem proteção (stop/alvo falharam e o
+  fechamento de emergência também), ⛔ kill switch acionado, ⚠️ posição
+  fechada fora do robô, 📴 processo caindo 3 vezes seguidas (e ✅ quando
+  normaliza) — este último enviado pelo próprio supervisor.
+- Verificação feita: 16 processos no ar, candles atualizados, cada engine
+  avaliando cada candle fechado (NO_SIGNAL em mercado lateral), votos por
+  estratégia recalculados com os mesmos dados de cada engine, e uma entrada
+  típica passando pelo RiskEngine em todas as contas e pares.
+
 ## Fase 20 — notificações push (Web Push / VAPID)
 
 - Botão 🔔 no app: ativa notificações no aparelho (no iPhone, só com o app

@@ -82,9 +82,45 @@ _POLL_INTERVAL_SECONDS = 5.0
 _BACKOFF_RESET_AFTER_SECONDS = 600.0
 
 
+# Phone alert (Web Push) only after this many consecutive crashes - one
+# isolated crash that the restart fixes is not worth waking anyone up for.
+_PUSH_ALERT_AFTER_FAILURES = 3
+
+
+class _PushAlerts:
+    """Web Push from the supervisor itself (Fase 20). The DB pool is created
+    lazily, so the supervisor still starts - and keeps restarting children -
+    even if the database is down."""
+
+    def __init__(self, settings) -> None:
+        self.settings = settings
+        self._pool = None
+        self._notifier = None
+
+    async def send(self, message) -> None:
+        if not (self.settings.vapid_private_key and self.settings.vapid_public_key):
+            return
+        try:
+            if self._notifier is None:
+                from aegis.db.engine import create_pool
+                from aegis.notifications.webpush import build_webpush_notifier
+                self._pool = await create_pool(self.settings)
+                self._notifier = build_webpush_notifier(self._pool, self.settings)
+            await asyncio.wait_for(self._notifier.send(message), timeout=30)
+        except Exception as exc:  # noqa: BLE001 - alerting must never break supervision
+            log_event(_LOG, "push_alert_failed", level=30, error=str(exc)[:200])
+
+    async def aclose(self) -> None:
+        if self._pool is not None:
+            from aegis.db.engine import close_pool
+            await close_pool(self._pool)
+
+
 class _Supervised:
-    def __init__(self, script: str, notifier: TelegramNotifier | None = None) -> None:
+    def __init__(self, script: str, notifier: TelegramNotifier | None = None, push: _PushAlerts | None = None) -> None:
         self.script = script
+        self.push = push
+        self.push_alerted = False
         self.process: asyncio.subprocess.Process | None = None
         self.started_at: float = 0.0
         self.next_restart_at: float | None = None
@@ -111,7 +147,13 @@ class _Supervised:
 
     async def check_and_maybe_restart(self, now: float) -> None:
         if self.process.returncode is None:
-            return  # still running
+            # still running - announce recovery once it has stayed up long enough
+            if self.push_alerted and now - self.started_at >= _BACKOFF_RESET_AFTER_SECONDS:
+                self.push_alerted = False
+                if self.push is not None:
+                    from aegis.notifications.webpush import process_recovered_message
+                    await self.push.send(process_recovered_message(self.script))
+            return
         if self.next_restart_at is None:
             uptime = now - self.started_at
             if uptime >= _BACKOFF_RESET_AFTER_SECONDS:
@@ -132,6 +174,11 @@ class _Supervised:
                     f"⚠️ Supervisor: '{self.script}' caiu (exit code {self.process.returncode}) "
                     f"depois de {round(uptime, 1)}s no ar. Reiniciando automaticamente."
                 )
+            if self.backoff.attempt >= _PUSH_ALERT_AFTER_FAILURES and not self.push_alerted:
+                self.push_alerted = True
+                if self.push is not None:
+                    from aegis.notifications.webpush import process_down_message
+                    await self.push.send(process_down_message(self.script, self.backoff.attempt))
             return
         if now >= self.next_restart_at:
             await self.start()
@@ -141,7 +188,8 @@ async def _run_supervisor() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    children = [_Supervised(script, notifier=notifier) for script in _SUPERVISED_SCRIPTS]
+    push = _PushAlerts(settings)
+    children = [_Supervised(script, notifier=notifier, push=push) for script in _SUPERVISED_SCRIPTS]
     for child in children:
         await child.start()
     log_event(_LOG, "supervisor_started", scripts=_SUPERVISED_SCRIPTS)
@@ -156,6 +204,7 @@ async def _run_supervisor() -> None:
         log_event(_LOG, "supervisor_stopping")
         await asyncio.gather(*(child.stop() for child in children))
         await notifier.aclose()
+        await push.aclose()
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ async def _main() -> None:
     liquidation_repo = LiquidationRepository(pool)
     strategy_settings_repo = StrategySettingsRepository(pool)
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier)
+    kill_switch_repo = KillSwitchRepository(pool, notifier=notifier, push=pusher)
     engine = PaperTradingEngine(candle_repo, paper_repo, risk_repo, kill_switch_repo, settings,
                                  derivatives_repo=derivatives_repo, liquidation_repo=liquidation_repo,
                                  strategy_settings_repo=strategy_settings_repo)

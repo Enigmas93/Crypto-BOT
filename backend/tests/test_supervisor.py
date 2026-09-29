@@ -71,3 +71,31 @@ async def test_check_and_maybe_restart_does_not_alert_without_a_notifier():
     child.process = _FakeProcess(returncode=1)
     child.started_at = 0.0
     await child.check_and_maybe_restart(now=100.0)
+
+
+class _FakePushAlerts:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, message):
+        self.sent.append(message.title)
+
+
+@pytest.mark.asyncio
+async def test_push_alert_only_after_three_consecutive_crashes_then_recovery():
+    push = _FakePushAlerts()
+    child = supervisor._Supervised("run_bingx_shadow_trading.py", push=push)
+    child.started_at = 0.0
+    for i, now in enumerate((10.0, 20.0, 30.0)):
+        child.process = _FakeProcess(returncode=1)
+        child.next_restart_at = None
+        await child.check_and_maybe_restart(now=now)
+        assert len(push.sent) == (1 if i == 2 else 0)
+    assert push.sent == ["📴 Processo caindo · Shadow BingX"]
+
+    child.process = _FakeProcess(returncode=None)  # restarted and running
+    child.started_at = 100.0
+    await child.check_and_maybe_restart(now=200.0)  # up only 100s - too early
+    assert len(push.sent) == 1
+    await child.check_and_maybe_restart(now=100.0 + supervisor._BACKOFF_RESET_AFTER_SECONDS)
+    assert push.sent[-1] == "✅ Processo normalizado · Shadow BingX"

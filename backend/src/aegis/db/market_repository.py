@@ -58,6 +58,7 @@ class MarketRepository:
                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                 ON CONFLICT (symbol, interval, open_time) DO UPDATE SET
                     close_time = EXCLUDED.close_time,
+                    open = EXCLUDED.open,
                     high = EXCLUDED.high,
                     low = EXCLUDED.low,
                     close = EXCLUDED.close,
