@@ -27,9 +27,10 @@ ACCOUNT_LABELS = {
     "shadow_bingx_demo": "Shadow BingX Demo", "shadow_bingx_live": "Shadow BingX REAL",
     "momentum": "Momentum Binance",
     "momentum_bingx_demo": "Momentum BingX Demo", "momentum_bingx_live": "Momentum BingX REAL",
+    "trend_paper": "Tendência BTC+ETH (paper)",
 }
 EXIT_LABELS = {
-    "STOP": "stop", "TAKE_PROFIT": "alvo", "TRAILING_STOP": "trailing stop", "END_OF_DATA": "fim dos dados",
+    "REBALANCE": "virada de tendência", "STOP": "stop", "TAKE_PROFIT": "alvo", "TRAILING_STOP": "trailing stop", "END_OF_DATA": "fim dos dados",
 }
 
 
@@ -144,7 +145,7 @@ PROCESS_LABELS = {
     "run_bingx_shadow_trading.py": "Shadow BingX", "run_momentum_trading.py": "Momentum Binance",
     "run_bingx_momentum_trading.py": "Momentum BingX", "run_daily_reset.py": "reset diário",
     "run_dashboard.py": "painel/API", "run_ai_engine.py": "IA", "run_tunnel.py": "túnel do celular",
-    "run_watchdog.py": "vigia de saúde",
+    "run_watchdog.py": "vigia de saúde", "run_trend_engine.py": "Tendência BTC+ETH",
 }
 
 

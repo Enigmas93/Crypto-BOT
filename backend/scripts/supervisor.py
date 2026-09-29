@@ -74,6 +74,7 @@ _SUPERVISED_SCRIPTS = [
     "run_ai_engine.py",
     "run_tunnel.py",
     "run_watchdog.py",
+    "run_trend_engine.py",
 ]
 
 _POLL_INTERVAL_SECONDS = 5.0

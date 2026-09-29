@@ -1,7 +1,7 @@
 // Aegis Quant service worker: caches the app shell so the PWA opens
 // instantly (and installs), never caches API responses - they carry the
 // auth token and live trading data that must never be served stale.
-const CACHE = "aegis-shell-v4";
+const CACHE = "aegis-shell-v5";
 const SHELL = [
   "/", "/static/dashboard.css", "/static/dashboard.js", "/manifest.webmanifest",
   "/static/icons/icon-192.png", "/static/icons/icon-512.png", "/static/icons/apple-touch-icon.png",

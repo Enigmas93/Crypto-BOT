@@ -50,6 +50,7 @@
     <button class="tab-btn" data-tab="binance">BINANCE</button>
     <button class="tab-btn active" data-tab="bingx">BINGX</button>
     <button class="tab-btn" data-tab="intel">INTELIGÊNCIA</button>
+    <button class="tab-btn" data-tab="trend">TENDÊNCIA</button>
     <button class="tab-btn" data-tab="strategies">STRATEGIES</button>
     <button class="tab-btn" data-tab="positions">POSITIONS</button>
     <button class="tab-btn" data-tab="orders">ORDERS</button>
@@ -238,6 +239,38 @@
         <div class="table-scroll"><table><thead><tr><th>Quando</th><th>Conta</th><th>Símbolo</th><th>Resultado</th><th>Veredito</th><th>Lição</th></tr></thead>
           <tbody id="intel-reviews"></tbody></table></div>
       </div></div>
+    </div>
+
+    <!-- ============ TENDÊNCIA (Fase 24) ============ -->
+    <div class="view" id="view-trend">
+      <div class="kpi-strip" id="trend-kpis"></div>
+      <div class="grid full"><div class="card">
+        <h2>Tendência BTC + ETH <span class="pill-env">PAPER</span></h2>
+        <div class="subtitle">
+          Uma decisão por dia, no fechamento do candle diário (00:00 UTC = 21:00 Brasília). Para cada moeda, 5 votos:
+          o preço está acima ou abaixo de 20, 30, 40, 50 e 60 dias atrás? Todos a favor = posição cheia; vendido usa meia mão.
+          O peso de cada moeda é inverso à volatilidade. Preços e funding reais da BingX; as ordens são simuladas
+          (a conta BingX já tem o Shadow operando BTC/ETH e o modo one-way não permite duas posições no mesmo par).
+        </div>
+        <div class="table-scroll"><table><thead><tr>
+          <th>Moeda</th><th>20d</th><th>30d</th><th>40d</th><th>50d</th><th>60d</th><th>Sinal</th><th>Vol. diária</th><th>Peso alvo</th>
+        </tr></thead><tbody id="trend-signal"></tbody></table></div>
+        <div class="refresh-note" id="trend-signal-note"></div>
+      </div></div>
+      <div class="grid g2">
+        <div class="card"><h2>Patrimônio (paper)</h2><div style="height:240px"><canvas id="trend-chart"></canvas></div></div>
+        <div class="card"><h2>Posições</h2>
+          <div class="table-scroll"><table><thead><tr><th>Moeda</th><th>Lado</th><th>Tamanho</th><th>Entrada</th><th>Atual</th><th>PnL aberto</th><th>Desde</th></tr></thead>
+            <tbody id="trend-positions"></tbody></table></div>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card"><h2>O que esperar (backtest)</h2><div id="trend-backtest"></div></div>
+        <div class="card"><h2>Histórico de execuções e funding</h2>
+          <div class="table-scroll"><table><thead><tr><th>Quando</th><th>Moeda</th><th>Tipo</th><th>Mudança</th><th>Preço</th><th>Taxa</th><th>Resultado</th></tr></thead>
+            <tbody id="trend-ledger"></tbody></table></div>
+        </div>
+      </div>
     </div>
 
     <!-- ============ STRATEGIES ============ -->

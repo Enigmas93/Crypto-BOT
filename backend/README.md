@@ -3291,6 +3291,36 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Fase 24 — estudo dos estilos de operação + engine de Tendência BTC+ETH (paper)
+
+**Triagem** (custos 0,08%/lado + funding real, sem look-ahead, treino/validação):
+
+| Estilo | Teste | Resultado |
+|---|---|---|
+| Day trade / scalping | 1m e 15m (Fase 18/23) | reprovado: custo ≥ stop |
+| Momentum intradiário | seguir o dia a partir de 12h/20h/22h UTC, 20 pares | negativo em treino e validação |
+| Reversão intradiária | oposto do anterior | negativo |
+| Swing / rompimento | Donchian 1h + 3R (já no Shadow) | positivo, pequeno |
+| Reversão à média | RSI2 4h na tendência | Sharpe −0,8 / −1,8 |
+| Grid | BTC/ETH 1m, passos 0,3/0,5/1% | negativo em todos (−12% a −129%/ano) |
+| Arbitragem de pares vs BTC | z-score 15/30/60d, 36 combinações | só 22% das combinações positivas nos dois períodos; 2025 negativo nas duas corretoras; reprovado |
+| Cash-and-carry | spot comprado + perp vendido | 2–5%/ano, queda ~0; baixo risco, baixo retorno |
+| **Tendência / posição BTC+ETH** | votação de 20/30/40/50/60 dias, short com meia mão | **aprovado** |
+
+**Tendência, aprofundado** (perpétuos Binance, diário, nov/2019–set/2026, 7 anos incluindo o bear de 2022):
+Sharpe 1,01, 39%/ano, queda máx. −42%; custo em dobro 0,94; executando 1 dia atrasado 0,86. Ano a ano:
+2020 +137%, 2021 +87%, 2022 −15%, 2023 +65%, 2024 0%, 2025 +24%, 2026 +22%. Cada janela isolada de 30 a 60
+dias é positiva na Binance 2023–26 e nos dados próprios da BingX 2025–26 (Sharpe 0,9–1,5).
+
+**Implementação** — `aegis/trend/` (`strategy.py` sinal, `book.py` contabilidade de perpétuo, `engine.py` loop),
+`scripts/run_trend_engine.py` (supervisionado), migração 0025, `GET /api/trend/summary`, aba TENDÊNCIA, push na
+abertura/virada/fechamento, vigia confere batimento a cada minuto e o rebalanceamento diário (00:05 UTC).
+Roda em **PAPER**: preços e funding reais da BingX de produção, ordens simuladas (taxa 0,05% + slippage 0,03%).
+Motivo: a conta BingX já tem o Shadow operando BTC/ETH em modo one-way (uma posição líquida por par), então uma
+posição de semanas se misturaria com os trades do Shadow. Operar de verdade exige uma subconta BingX com chave
+própria **e a confirmação explícita do usuário**. Teste de paridade garante que o sinal de produção é idêntico
+ao da pesquisa.
+
 ## Fase 23 — pesquisa: scalping (reprovado) e estratégias de portfólio
 
 **Scalping 15m/5m/1m (spec do usuário)** — `aegis/scalping/` (estratégia única

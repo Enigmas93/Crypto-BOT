@@ -54,6 +54,7 @@ from aegis.db.risk_repository import RiskRepository
 from aegis.db.capital_allocation_repository import CapitalAllocationRepository
 from aegis.db.shadow_repository import ShadowRepository
 from aegis.db.strategy_settings_repository import StrategySettingsRepository
+from aegis.db.trend_repository import TrendRepository
 from aegis.db.walk_forward_repository import WalkForwardRepository
 from aegis.execution.bingx_provider import BingXExecutionProvider
 from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrderError, BingXRestError
@@ -844,6 +845,23 @@ async def get_intelligence_summary(
             "strategies": list(ALL_STRATEGY_IDS),
         },
     }
+
+
+# Research evidence behind the trend engine (Fase 24) - shown next to the live
+# paper results so the two can be compared honestly.
+TREND_BACKTEST = {
+    "period": "2019-11 a 2026-09 (perpétuos Binance, diário)",
+    "sharpe": 1.01, "cagr_pct": 39.3, "max_dd_pct": -42.4,
+    "sharpe_double_costs": 0.94, "sharpe_one_day_late": 0.86,
+    "yearly_pct": {"2020": 137, "2021": 87, "2022": -15, "2023": 65, "2024": 0, "2025": 24, "2026": 22},
+    "bingx_2025_2026": "L=30-60 dias positivos em todas as variantes; 20-60d meio-short: Sharpe 1,0-1,5",
+}
+
+
+@router.get("/trend/summary")
+async def get_trend_summary(pool=Depends(get_pool)) -> dict:
+    """Trend engine paper book: equity, positions, today's signal, ledger."""
+    return {"book": await TrendRepository(pool).summary("trend_paper"), "backtest": TREND_BACKTEST, "mode": "PAPER"}
 
 
 @router.get("/intelligence/excursions")

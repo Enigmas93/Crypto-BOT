@@ -155,6 +155,7 @@ let cache = {
   newsFull: { items: [] },
   intel: { briefs: [], news: [], pulse: [], reviews: [], listings: [], research: [], active_config: null },
   excursions: { closed: [], open: [] },
+  trend: null,
 };
 let evidenceSource = "BINGX 1h";
 
@@ -962,7 +963,100 @@ function renderAll() {
   renderNewsTab();
   renderRiskLogsTab();
   renderIntelTab();
+  renderTrendTab();
   renderHealth22();
+}
+
+// -- tendência tab (Fase 24) -------------------------------------------------------
+function renderTrendTab() {
+  const t = cache.trend;
+  const book = t && t.book;
+  const kpis = el("trend-kpis");
+  if (!kpis) return;
+  if (!book) {
+    kpis.innerHTML = `<div class="kpi-tile accent"><div class="lbl">Status</div><div class="val" style="font-size:14px">Aguardando o primeiro ciclo do engine</div></div>`;
+    return;
+  }
+  const ret = book.equity / book.starting_equity - 1;
+  const curve = book.equity_curve || [];
+  let peak = -Infinity, dd = 0;
+  curve.forEach((p) => { peak = Math.max(peak, p.equity); dd = Math.min(dd, p.equity / peak - 1); });
+  const gross = (book.positions || []).reduce((a, p) => a + p.notional, 0) / book.equity;
+  const tiles = [
+    ["Patrimônio", fmtMoney(book.equity)],
+    ["Retorno", `<span class="${ret >= 0 ? "up" : "down"}">${ret >= 0 ? "+" : ""}${fmtPct(ret)}</span>`],
+    ["Drawdown máx.", `<span class="${dd < 0 ? "down" : ""}">${fmtPct(dd)}</span>`],
+    ["Exposição", `${(gross * 100).toFixed(0)}% do capital`],
+    ["Taxas pagas", fmtMoney(-book.totals.fees)],
+    ["Funding", `<span class="${book.totals.funding >= 0 ? "up" : "down"}">${fmtMoney(book.totals.funding)}</span>`],
+  ];
+  kpis.innerHTML = tiles.map(([l, v], i) => `<div class="kpi-tile ${i === 0 ? "accent" : ""}"><div class="lbl">${l}</div><div class="val" style="font-size:15px">${v}</div></div>`).join("");
+
+  const sig = book.signal;
+  const vote = (v) => (v > 0 ? '<span class="up">▲</span>' : v < 0 ? '<span class="down">▼</span>' : "·");
+  el("trend-signal").innerHTML = sig ? Object.entries(sig.symbols).map(([sym, s]) => {
+    const side = s.weight > 0 ? '<span class="pill long">COMPRADO</span>'
+      : s.weight < 0 ? '<span class="pill short">VENDIDO</span>' : '<span class="pill">FORA</span>';
+    return `<tr><td class="num">${escapeHtml(sym.replace("USDT", ""))}</td>
+      ${sig.lookbacks.map((L) => `<td>${vote(s.votes[String(L)])}</td>`).join("")}
+      <td>${side}</td><td class="num">${fmtPct(s.daily_vol)}</td><td class="num">${fmtPct(s.weight, 1)}</td></tr>`;
+  }).join("") : `<tr><td colspan="9" class="empty">Sinal ainda não calculado.</td></tr>`;
+  el("trend-signal-note").textContent = sig
+    ? `Calculado sobre o candle diário de ${new Date(sig.bar).toLocaleDateString("pt-BR", { timeZone: "UTC" })} · próxima revisão ~21:05 (Brasília) · engine ativo às ${fmtClock(book.updated_at)}`
+    : "";
+
+  el("trend-positions").innerHTML = (book.positions || []).length ? book.positions.map((p) => `<tr>
+      <td class="num">${escapeHtml(p.symbol.replace("USDT", ""))}</td>
+      <td><span class="pill ${p.side === "LONG" ? "long" : "short"}">${p.side}</span></td>
+      <td class="num">${fmtMoney(p.notional)}</td><td class="num">${fmtNum(p.entry_price, 2)}</td>
+      <td class="num">${fmtNum(p.mark_price, 2)}</td>
+      <td class="num ${p.unrealized_pnl >= 0 ? "up" : "down"}">${fmtMoney(p.unrealized_pnl)}</td>
+      <td>${fmtDuration(p.opened_at)}</td></tr>`).join("")
+    : `<tr><td colspan="7" class="empty">Sem posição — o sinal está neutro.</td></tr>`;
+
+  const kindLabel = (r) => (r.kind === "FUNDING" ? "funding" : r.side_before === r.side_after ? "ajuste" : `${r.side_before} → ${r.side_after}`);
+  el("trend-ledger").innerHTML = (book.ledger || []).length ? book.ledger.map((r) => {
+    const result = r.kind === "FUNDING" ? r.funding : r.realized_pnl;
+    return `<tr><td>${fmtTime(r.ts)}</td><td class="num">${escapeHtml(r.symbol.replace("USDT", ""))}</td>
+      <td>${escapeHtml(kindLabel(r))}</td><td class="num">${r.kind === "TRADE" ? fmtNum(r.qty, 5) : "—"}</td>
+      <td class="num">${r.kind === "TRADE" ? fmtNum(r.price, 2) : "—"}</td><td class="num">${r.fee ? fmtMoney(-r.fee) : "—"}</td>
+      <td class="num ${result >= 0 ? "up" : "down"}">${result ? fmtMoney(result) : "—"}</td></tr>`;
+  }).join("") : `<tr><td colspan="7" class="empty">Nenhuma execução ainda.</td></tr>`;
+
+  const bt = t.backtest;
+  el("trend-backtest").innerHTML = bt ? `
+    <div class="subtitle">${escapeHtml(bt.period)} · custos de 0,08% por lado + funding real</div>
+    <div class="table-scroll"><table><tbody>
+      <tr><td>Sharpe</td><td class="num">${bt.sharpe}</td><td>com custo em dobro</td><td class="num">${bt.sharpe_double_costs}</td></tr>
+      <tr><td>Retorno anual</td><td class="num">${bt.cagr_pct}%</td><td>executando 1 dia atrasado</td><td class="num">${bt.sharpe_one_day_late}</td></tr>
+      <tr><td>Pior queda</td><td class="num down">${bt.max_dd_pct}%</td><td colspan="2"></td></tr>
+    </tbody></table></div>
+    <div class="chip-row">${Object.entries(bt.yearly_pct).map(([y, v]) => `<span class="pill ${v > 0 ? "long" : v < 0 ? "short" : ""}">${y}: ${v > 0 ? "+" : ""}${v}%</span>`).join(" ")}</div>
+    <div class="refresh-note">Segue tendência: perde em mercado lateral e ganha em poucos movimentos grandes. Espere semanas ou meses sem ganho.</div>`
+    : "";
+
+  const canvas = el("trend-chart");
+  const data = curve.map((p) => ({ x: new Date(p.ts), y: p.equity }));
+  if (charts["trend-chart"]) {
+    charts["trend-chart"].data.datasets[0].data = data;
+    charts["trend-chart"].update("none");
+  } else if (canvas && typeof Chart !== "undefined") {
+    const rootStyles = getComputedStyle(document.documentElement);
+    const gridColor = rootStyles.getPropertyValue("--border").trim() || "#163027";
+    const tickColor = rootStyles.getPropertyValue("--text-faint").trim() || "#4a6b5c";
+    charts["trend-chart"] = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: { datasets: [{ data, borderColor: "#f7b500", backgroundColor: "#f7b50022", borderWidth: 2, pointRadius: 0, tension: 0.2, fill: true }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        scales: {
+          x: { type: "time", time: { unit: "day" }, grid: { color: gridColor }, ticks: { color: tickColor, maxTicksLimit: 6, font: { family: "JetBrains Mono", size: 10 } } },
+          y: { grid: { color: gridColor }, ticks: { color: tickColor, font: { family: "JetBrains Mono", size: 10 } } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+  }
 }
 
 // -- system health (Fase 22) ------------------------------------------------------
@@ -1208,10 +1302,11 @@ async function refreshData() {
     getJSON("/api/news/recent?limit=150").catch(() => cache.newsFull),
     getJSON("/api/bingx/real-equity").catch(() => cache.bingxRealEquity),
   ]);
-  const [intel, excursions, watchdog] = await Promise.all([
+  const [intel, excursions, watchdog, trend] = await Promise.all([
     getJSON("/api/intelligence/summary").catch(() => cache.intel),
     getJSON("/api/intelligence/excursions").catch(() => cache.excursions),
     getJSON("/api/system/watchdog").catch(() => null),
+    getJSON("/api/trend/summary").catch(() => cache.trend),
   ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
@@ -1231,7 +1326,7 @@ async function refreshData() {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health,
     macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings, strategySettings, capitalAllocation, newsFull,
-    bingxRealEquity, intel, excursions, watchdog,
+    bingxRealEquity, intel, excursions, watchdog, trend,
     tradesByAccount: cache.tradesByAccount,
   };
 }

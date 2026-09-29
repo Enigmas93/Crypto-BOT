@@ -32,6 +32,7 @@ PUBLIC_ENDPOINTS = {
     "server_time": "/openApi/swap/v2/server/time",
     "ticker_24hr": "/openApi/swap/v2/quote/ticker",
     "klines": "/openApi/swap/v3/quote/klines",
+    "funding_rate": "/openApi/swap/v2/quote/fundingRate",
 }
 
 # Signed (account/trading) endpoints.

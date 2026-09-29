@@ -373,6 +373,17 @@ class BingXFuturesRestClient:
         klines.reverse()  # BingX returns newest-first; this codebase expects oldest-first throughout
         return klines
 
+    async def get_funding_rate_history(self, symbol: str, start_ms: int | None = None,
+                                       limit: int = 100) -> list[tuple[int, float, float]]:
+        """Settled funding events as (funding_time_ms, rate, mark_price), oldest
+        first (BingX returns newest-first). Public; verified live 2026-09-29."""
+        params: dict[str, Any] = {"symbol": to_bingx_symbol(symbol), "limit": limit}
+        if start_ms is not None:
+            params["startTime"] = start_ms
+        raw = await self._get(PUBLIC_ENDPOINTS["funding_rate"], params=params)
+        rows = [(int(r["fundingTime"]), float(r["fundingRate"]), float(r.get("markPrice") or 0.0)) for r in raw or []]
+        return sorted(rows)
+
     # -- signed reads --------------------------------------------------------
     async def get_account_balance(self) -> list[dict[str, Any]]:
         return await self._signed_get(SIGNED_ENDPOINTS["balance"])

@@ -23,6 +23,7 @@ ENGINE_LABELS = {
     "shadow_bingx_demo": "Shadow BingX Demo", "shadow_bingx_live": "Shadow BingX REAL",
     "momentum": "Momentum Binance",
     "momentum_bingx_demo": "Momentum BingX Demo", "momentum_bingx_live": "Momentum BingX REAL",
+    "trend_paper": "Tendência BTC+ETH",
 }
 
 
@@ -44,6 +45,8 @@ class HealthInputs:
     momentum_accounts: list[str] = field(default_factory=list)
     kill_switched: list[str] = field(default_factory=list)
     binance_db_accounts: tuple[str, ...] = ("paper", "shadow")
+    trend_updated_at: datetime | None = None        # None = trend engine never started
+    trend_last_bar: datetime | None = None          # open time of the daily bar last rebalanced on
 
 
 def last_closed_bar_close(now: datetime, interval: str) -> datetime:
@@ -101,7 +104,24 @@ def evaluate_health(inp: HealthInputs, candle_stale_minutes: int = 5, engine_gra
                 "Nenhum candidato do scanner foi avaliado no último candle de 1h.",
             ))
 
-    # 4. Accounts halted by the kill switch (alerted when it fired; listed here for the panel).
+    # 4. Trend engine (daily): alive every minute, and today's rebalance done.
+    if inp.trend_updated_at is not None:
+        label = ENGINE_LABELS["trend_paper"]
+        if inp.now - inp.trend_updated_at > timedelta(minutes=engine_grace_minutes):
+            issues.append(HealthIssue(
+                "engine:trend_paper", "CRITICAL", f"{label} parou",
+                f"Sem atualizar há {int((inp.now - inp.trend_updated_at).total_seconds() // 60)} min.",
+            ))
+        else:
+            today = inp.now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if inp.now - today >= timedelta(minutes=30) and (inp.trend_last_bar is None
+                                                             or inp.trend_last_bar < today - timedelta(days=1)):
+                issues.append(HealthIssue(
+                    "engine:trend_paper_rebalance", "CRITICAL", f"{label} não rebalanceou hoje",
+                    "O candle diário de 00:00 UTC fechou há mais de 30 min e o sinal não foi recalculado.",
+                ))
+
+    # 5. Accounts halted by the kill switch (alerted when it fired; listed here for the panel).
     for account in inp.kill_switched:
         issues.append(HealthIssue(
             f"killswitch:{account}", "WARNING", f"{ENGINE_LABELS.get(account, account)} parado pelo kill switch",
@@ -127,6 +147,8 @@ async def collect_inputs(pool, settings, now: datetime | None = None) -> HealthI
         for table in ("paper_positions", "shadow_positions"):
             open_rows += await conn.fetch(f"SELECT account_id, symbol FROM {table}")
         killed = await conn.fetch("SELECT account_id FROM kill_switch_state WHERE is_triggered")
+        trend = await conn.fetchrow(
+            "SELECT updated_at, last_rebalance_bar FROM trend_account WHERE account_id = 'trend_paper'")
 
     shadow_bingx, momentum_bingx = f"shadow_bingx_{mode}", f"momentum_bingx_{mode}"
     expected = []
@@ -142,6 +164,8 @@ async def collect_inputs(pool, settings, now: datetime | None = None) -> HealthI
         open_positions={(r["account_id"], r["symbol"]) for r in open_rows},
         momentum_accounts=["momentum", momentum_bingx],
         kill_switched=[r["account_id"] for r in killed],
+        trend_updated_at=trend["updated_at"] if trend else None,
+        trend_last_bar=trend["last_rebalance_bar"] if trend else None,
     )
 
 
