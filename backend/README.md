@@ -3291,6 +3291,28 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Fase 23 — pesquisa: scalping (reprovado) e estratégias de portfólio
+
+**Scalping 15m/5m/1m (spec do usuário)** — `aegis/scalping/` (estratégia única
+para backtest/paper/live + backtest com regras de sessão; teste prova ausência
+de look-ahead). 1,8 milhão de candles de 1m de BTC/ETH (BingX 2026 + Binance
+2025), ~1.600 operações, taxas BingX. **Reprovado em todos os períodos e nas 3
+saídas** (−0,37 a −0,62R por trade, acerto 11–19%). Causa: stop estrutural
+mediano de 0,12% do preço contra 0,13% de custo por operação; sem custo
+nenhum o resultado fica ~0R (sem vantagem). Busca de variantes (ordem
+limitada/maker, trincas 5m/15m/1h e 15m/1h/4h, filtro de custo e horário — 24
+combinações, critério fixado antes: positivo em treino, validação e 2025 com
+≥100 trades e PF>1,1): **nenhuma aprovada**. Não implementado para operar.
+
+**Portfólio (20 pares Binance, 4h, jun/23–set/26, taxas + slippage + funding
+real; seleção até mai/25):** estratégias só-compradas quebram após 2025
+(Sharpe −0,5 a −0,6); momentum cross-sectional perde força em 2026. O único
+candidato consistente foi **tendência 60d long/short + carry de funding
+(50/50)**: Sharpe 0,69 treino / 0,59 validação, positivo em todos os anos,
+queda máx. −21/−26%. Conferido sem reajuste nos preços e no funding do próprio
+BingX (35 pares, jan/25–set/26): Sharpe 0,70, 17%/ano, **queda máx. −39%**, 4
+de 7 trimestres positivos. Ainda não implementado — decisão do usuário.
+
 ## Fase 22 — vigia de saúde (watchdog) + WebSocket da Binance corrigido
 
 - **Causa das horas sem análise no Paper/Shadow Binance:** a Binance dividiu os
