@@ -21,7 +21,8 @@ from websockets.exceptions import ConnectionClosed
 
 from aegis.logging_utils import get_logger, log_event
 from aegis.providers.binance.constants import (
-    WS_BASE_URL_PROD,
+    WS_BASE_URL_PROD_MARKET,
+    WS_BASE_URL_PROD_PUBLIC,
     WS_BASE_URL_TESTNET,
     WS_MAX_CONNECTION_SECONDS,
     WS_STALE_AFTER_SECONDS,
@@ -41,11 +42,18 @@ class BinanceFuturesWebSocketClient:
         testnet: bool = True,
         stale_after_seconds: float = WS_STALE_AFTER_SECONDS,
         max_connection_seconds: float = WS_MAX_CONNECTION_SECONDS,
+        channel: str = "market",
     ) -> None:
+        """`channel`: "market" (kline/markPrice/aggTrade/forceOrder) or
+        "public" (depth/bookTicker) - production serves them on different
+        paths, see constants.WS_BASE_URL_PROD_MARKET."""
         if not streams:
             raise ValueError("streams must be a non-empty list")
+        if channel not in ("market", "public"):
+            raise ValueError(f"channel must be 'market' or 'public', got {channel!r}")
         self.streams = streams
         self.testnet = testnet
+        self.channel = channel
         self.stale_after_seconds = stale_after_seconds
         self.max_connection_seconds = max_connection_seconds
         self._stop_event = asyncio.Event()
@@ -55,7 +63,10 @@ class BinanceFuturesWebSocketClient:
 
     @property
     def url(self) -> str:
-        base = WS_BASE_URL_TESTNET if self.testnet else WS_BASE_URL_PROD
+        if self.testnet:
+            base = WS_BASE_URL_TESTNET
+        else:
+            base = WS_BASE_URL_PROD_MARKET if self.channel == "market" else WS_BASE_URL_PROD_PUBLIC
         return f"{base}?streams={'/'.join(self.streams)}"
 
     def stop(self) -> None:

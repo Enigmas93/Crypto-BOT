@@ -962,6 +962,40 @@ function renderAll() {
   renderNewsTab();
   renderRiskLogsTab();
   renderIntelTab();
+  renderHealth22();
+}
+
+// -- system health (Fase 22) ------------------------------------------------------
+function renderHealth22() {
+  const h = cache.watchdog;
+  const indicator = el("health-indicator");
+  const label = el("health-label");
+  if (!indicator) return;
+  const status = h ? h.status : null;
+  const issues = (h && h.issues) || [];
+  const crit = issues.filter((i) => i.severity === "CRITICAL").length;
+  indicator.className = `status-dot ${status === "OK" ? "health-ok" : status === "WARNING" ? "health-warn"
+    : status === "CRITICAL" ? "health-crit" : "health-unknown"}`;
+  label.textContent = status === "OK" ? "SISTEMA OK" : status === "WARNING" ? "ATENÇÃO"
+    : status === "CRITICAL" ? `PROBLEMA (${crit})` : "SEM STATUS";
+
+  const summary = el("health-summary");
+  const list = el("health-issues");
+  if (!summary) return;
+  if (!h) {
+    summary.className = "empty";
+    summary.textContent = "Não foi possível obter o status do vigia.";
+    list.innerHTML = "";
+    return;
+  }
+  const age = h.age_seconds !== undefined ? ` · verificado há ${h.age_seconds}s` : "";
+  summary.className = "";
+  summary.innerHTML = status === "OK"
+    ? `<span class="pill ok">TUDO FUNCIONANDO</span> <span class="refresh-note">Dados em dia e todos os engines analisaram o último candle${age}</span>`
+    : `<span class="pill ${status === "WARNING" ? "warn" : "crit"}">${issues.length} ${issues.length === 1 ? "ITEM" : "ITENS"} PARA VER</span> <span class="refresh-note">${age.replace(" · ", "")}</span>`;
+  list.innerHTML = issues.map((i) => `<div class="health-issue ${i.severity}">
+      <div class="hi-title">${i.severity === "CRITICAL" ? "🩺" : "⚠️"} ${escapeHtml(i.title)}</div>
+      <div class="hi-detail">${escapeHtml(i.detail)}</div></div>`).join("");
 }
 
 // -- inteligência tab (Fase 18) -------------------------------------------------
@@ -1174,9 +1208,10 @@ async function refreshData() {
     getJSON("/api/news/recent?limit=150").catch(() => cache.newsFull),
     getJSON("/api/bingx/real-equity").catch(() => cache.bingxRealEquity),
   ]);
-  const [intel, excursions] = await Promise.all([
+  const [intel, excursions, watchdog] = await Promise.all([
     getJSON("/api/intelligence/summary").catch(() => cache.intel),
     getJSON("/api/intelligence/excursions").catch(() => cache.excursions),
+    getJSON("/api/system/watchdog").catch(() => null),
   ]);
   const equityHistoryPairs = await Promise.all(
     accountIds.map((id) => getJSON(`/api/equity-history?account=${id}&limit=500`).catch(() => ({ points: [{ closed_at: null, equity: 0 }] }))),
@@ -1196,7 +1231,7 @@ async function refreshData() {
     overview, positions, equityHistory, journal, momentumScan,
     newsAssetStatus, newsRecent, eventsUpcoming, backtests, walkForward, health,
     macro, derivatives, liquidations, regime, killSwitchEvents, bingxSettings, strategySettings, capitalAllocation, newsFull,
-    bingxRealEquity, intel, excursions,
+    bingxRealEquity, intel, excursions, watchdog,
     tradesByAccount: cache.tradesByAccount,
   };
 }
@@ -1463,6 +1498,7 @@ function initTabs() {
   el("logout-btn").addEventListener("click", logout);
   el("mobile-access-btn").addEventListener("click", openMobileAccess);
   el("mobile-close").addEventListener("click", () => { el("mobile-overlay").hidden = true; });
+  el("health-indicator").addEventListener("click", () => { setActiveTab("risk"); window.scrollTo(0, 0); });
   el("push-btn").addEventListener("click", () => { el("push-overlay").hidden = false; setPushStatus(""); renderPushPanel(); });
   el("push-close").addEventListener("click", () => { el("push-overlay").hidden = true; });
   el("push-enable").addEventListener("click", enablePush);

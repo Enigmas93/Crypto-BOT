@@ -28,7 +28,7 @@
       <div class="brand-text"><h1>AEGIS QUANT</h1><div class="tagline">Trading Intelligence · Real Results</div></div>
     </div>
     <div class="topbar-mid">
-      <span class="status-dot"><span class="dot"></span>SYSTEM ONLINE</span>
+      <button class="status-dot health-unknown" id="health-indicator" type="button" title="Saúde do sistema — toque para ver os detalhes"><span class="dot"></span><span id="health-label">VERIFICANDO…</span></button>
       <span id="last-update" class="refresh-note">—</span>
       <span class="badge">AMBIENTE: TESTNET</span>
     </div>
@@ -304,6 +304,17 @@
 
     <!-- ============ RISK & LOGS ============ -->
     <div class="view" id="view-risk">
+      <div class="section-title">Saúde do sistema <span class="section-hint">verificação automática a cada minuto · avisa no celular se algo parar</span></div>
+      <div class="grid full"><div class="card" id="health-card">
+        <div id="health-summary" class="empty">Carregando…</div>
+        <div id="health-issues"></div>
+        <div class="settings-note" style="margin-top:10px">
+          O vigia confere se os candles estão chegando e se <b>cada engine avaliou o último candle fechado de cada par</b>
+          (até 10 min depois do fechamento). Se um processo cair, uma corretora ficar fora do ar ou os dados
+          travarem, isso aparece aqui e chega uma notificação 🩺 — e outra ✅ quando normalizar.
+        </div>
+      </div></div>
+
       <div class="section-title">Risco por conta</div>
       <div class="grid g4" id="risk-logs-accounts"></div>
 

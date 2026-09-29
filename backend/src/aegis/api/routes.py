@@ -744,6 +744,25 @@ async def get_remote_access(settings: Settings = Depends(get_settings_dep)) -> d
     }
 
 
+# -- system watchdog (Fase 22) -----------------------------------------------------
+@router.get("/system/watchdog")
+async def get_watchdog_status(pool=Depends(get_pool)) -> dict:
+    import json
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT checked_at, payload FROM system_health_state WHERE id = 1")
+    now = datetime.now(UTC)
+    if row is None or (now - row["checked_at"]).total_seconds() > 180:
+        return {
+            "status": "CRITICAL", "checked_at": row["checked_at"].isoformat() if row else None,
+            "issues": [{"key": "watchdog", "severity": "CRITICAL", "title": "Vigia de saúde parado",
+                        "detail": "A verificação automática não roda há mais de 3 minutos."}],
+        }
+    payload = json.loads(row["payload"])
+    payload["age_seconds"] = round((now - row["checked_at"]).total_seconds())
+    return payload
+
+
 # -- Web Push (Fase 20) ----------------------------------------------------------
 class PushKeys(BaseModel):
     p256dh: str

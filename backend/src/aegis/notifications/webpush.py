@@ -144,6 +144,7 @@ PROCESS_LABELS = {
     "run_bingx_shadow_trading.py": "Shadow BingX", "run_momentum_trading.py": "Momentum Binance",
     "run_bingx_momentum_trading.py": "Momentum BingX", "run_daily_reset.py": "reset diário",
     "run_dashboard.py": "painel/API", "run_ai_engine.py": "IA", "run_tunnel.py": "túnel do celular",
+    "run_watchdog.py": "vigia de saúde",
 }
 
 

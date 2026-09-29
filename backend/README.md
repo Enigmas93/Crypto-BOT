@@ -3291,6 +3291,29 @@ Dashboard) já rodando havia horas em produção real de testnet:
   erro (headless via jsdom), nenhum crash-loop no supervisor depois dos
   reinícios.
 
+## Fase 22 — vigia de saúde (watchdog) + WebSocket da Binance corrigido
+
+- **Causa das horas sem análise no Paper/Shadow Binance:** a Binance dividiu os
+  WebSockets de produção de futuros. O caminho antigo `/stream` hoje só entrega
+  bookTicker/depth; kline, markPrice, aggTrade e forceOrder saem de
+  `/market/stream` (depth e bookTicker em `/public/stream`). A conexão abria
+  normalmente mas nenhuma vela chegava: primeiro o fluxo de bookTicker lotou a
+  fila de gravação (213 mil eventos descartados, candles 1h atrasados), depois
+  (sem bookTicker) o socket ficava mudo, reconectava a cada 90s e os candles só
+  avançavam pelo preenchimento via REST — gravados como "abertos", invisíveis
+  para os engines. Corrigido em `constants.WS_BASE_URL_PROD_MARKET/_PUBLIC` e no
+  parâmetro `channel` do `BinanceFuturesWebSocketClient`; o coletor não assina
+  mais aggTrade/bookTicker (ninguém lia essas tabelas).
+- **`scripts/run_watchdog.py`** (no supervisor), a cada minuto: candles da
+  Binance atualizados e **cada engine avaliou o último candle fechado de cada
+  par** (cursor de análise, até 10 min após o fechamento; posições abertas são
+  ignoradas). Cobre processo morto, corretora fora do ar, dados travados e bug.
+  Alerta 🩺 no celular e no Telegram após 2 verificações seguidas, lembrete a
+  cada 3h, e ✅ quando normaliza. Status em `/api/system/watchdog`, no
+  indicador do topo do painel e no quadro "Saúde do sistema" (Risco & Logs).
+- Limite: se o PC inteiro desligar, nada roda para avisar — cobrir isso exige um
+  monitor externo (ex.: healthchecks.io).
+
 ## Fase 21 — auditoria de funcionamento + alertas críticos no celular
 
 - **Dados de mercado da Binance agora vêm sempre da produção** (endpoints

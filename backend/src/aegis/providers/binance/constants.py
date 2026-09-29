@@ -19,7 +19,15 @@ REST_BASE_URL_TESTNET = "https://testnet.binancefuture.com"
 # endpoint, which respects the testnet flag.
 STATS_BASE_URL = "https://fapi.binance.com"
 
-WS_BASE_URL_PROD = "wss://fstream.binance.com/stream"
+# Binance split the USD-M production streams (verified live 2026-09-29 by
+# subscribing each stream on each path): the legacy `/stream` path now only
+# delivers high-frequency book streams (bookTicker, depth) and silently sends
+# NOTHING for kline/markPrice/aggTrade/forceOrder - the connection opens fine,
+# which is why candles quietly stopped arriving. Market streams live under
+# `/market/stream`; book streams under `/public/stream`.
+WS_BASE_URL_PROD_MARKET = "wss://fstream.binance.com/market/stream"   # kline, markPrice, aggTrade, forceOrder
+WS_BASE_URL_PROD_PUBLIC = "wss://fstream.binance.com/public/stream"   # depth, bookTicker
+WS_BASE_URL_PROD = WS_BASE_URL_PROD_MARKET
 WS_BASE_URL_TESTNET = "wss://stream.binancefuture.com/stream"
 
 # Endpoints that have NO WebSocket stream on Binance Futures and must be
