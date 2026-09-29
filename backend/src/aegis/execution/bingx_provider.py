@@ -35,6 +35,7 @@ entry never happens at all.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from aegis.execution.models import BracketOpenError  # noqa: F401 - re-exported, see below
@@ -50,6 +51,8 @@ from aegis.providers.bingx.rest_client import BingXFuturesRestClient, BingXOrder
 # BingXExecutionProvider actually raised - see models.py's docstring for
 # the real crash this caused.
 _UNKNOWN_ORDER_CODE = 109421  # BingX: "order does not exist" - already gone, not a failure
+_TRANSIENT_CODES = {100410, 100500, 109500, 110500}  # rate limit / service busy
+_LEVERAGE_ATTEMPTS = 3
 
 
 @dataclass(slots=True)
@@ -162,13 +165,22 @@ class BingXExecutionProvider:
         return TrailingBracketOrders(entry=entry, stop=stop, trailing_stop=trailing_stop)
 
     async def _set_leverage_or_raise(self, symbol: str, leverage: int) -> None:
-        try:
-            await self.rest.set_leverage(symbol, leverage)
-        except BingXOrderError as exc:
-            raise BracketOpenError(
-                f"could not set leverage to {leverage}x for {symbol} before entry: {exc}. No order was placed.",
-                flattened=True,
-            ) from exc
+        """Retries only BingX's transient gateway codes: setting leverage is
+        idempotent and happens before any order, so a retry can never open a
+        duplicate position. Found live 2026-09-29: a valid TIAUSDT signal was
+        lost to a one-off code 109500 ("Query Service Unavailable")."""
+        for attempt in range(_LEVERAGE_ATTEMPTS):
+            try:
+                await self.rest.set_leverage(symbol, leverage)
+                return
+            except BingXOrderError as exc:
+                if exc.code in _TRANSIENT_CODES and attempt < _LEVERAGE_ATTEMPTS - 1:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise BracketOpenError(
+                    f"could not set leverage to {leverage}x for {symbol} before entry: {exc}. No order was placed.",
+                    flattened=True,
+                ) from exc
 
     async def _emergency_close(self, symbol: str, closing_side: str, quantity: float) -> bool:
         try:

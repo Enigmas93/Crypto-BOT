@@ -77,14 +77,18 @@ class MarketCollector:
         self._ws: BinanceFuturesWebSocketClient | None = None
 
     def build_streams(self) -> list[str]:
+        """Klines (every signal) + mark price (feeds funding_rates, read by the
+        derivatives engine). aggTrade and bookTicker were dropped 2026-09-29:
+        nothing reads the `trades`/`book_ticker` tables, and on the real
+        market they are tens of millions of events a day - enough to fill the
+        persistence queue, drop 213k events and leave the 1m/1h candles an
+        hour behind, which silently starved Paper/Shadow Binance of new bars."""
         streams: list[str] = []
         for symbol in self.settings.symbols:
             s = symbol.lower()
             for interval in self.settings.intervals:
                 streams.append(f"{s}@kline_{interval}")
-            streams.append(f"{s}@aggTrade")
             streams.append(f"{s}@markPrice@1s")
-            streams.append(f"{s}@bookTicker")
         return streams
 
     async def bootstrap(self) -> dict[str, list[Kline]]:

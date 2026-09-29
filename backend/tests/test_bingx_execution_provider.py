@@ -351,3 +351,37 @@ async def test_get_equity_raises_on_an_empty_balance_response():
 
     with pytest.raises(ValueError):
         await provider.get_equity()
+
+
+@pytest.mark.asyncio
+async def test_transient_leverage_error_is_retried_then_entry_proceeds(monkeypatch):
+    import aegis.execution.bingx_provider as bp
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(bp.asyncio, "sleep", no_sleep)
+    rest = _FakeRestClient()
+    failures = {"left": 2}
+    original = rest.set_leverage
+
+    async def flaky_set_leverage(symbol, leverage):
+        if failures["left"]:
+            failures["left"] -= 1
+            rest.calls.append(("set_leverage", symbol, leverage))
+            raise BingXOrderError("Query Service Unavailable", code=109500)
+        return await original(symbol, leverage)
+
+    rest.set_leverage = flaky_set_leverage
+    await BingXExecutionProvider(rest).open_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 68000.0, 3)
+    assert [c[0] for c in rest.calls].count("set_leverage") == 3
+    assert any(c[0] == "place_market_order" for c in rest.calls)
+
+
+@pytest.mark.asyncio
+async def test_non_transient_leverage_error_is_not_retried(monkeypatch):
+    rest = _FakeRestClient()
+    rest.fail_set_leverage = True  # plain error, no transient code
+    with pytest.raises(BracketOpenError):
+        await BingXExecutionProvider(rest).open_bracket_position("BTCUSDT", "LONG", 0.01, 63000.0, 68000.0, 3)
+    assert [c[0] for c in rest.calls].count("set_leverage") == 1

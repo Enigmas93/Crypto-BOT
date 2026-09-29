@@ -49,13 +49,15 @@ async def test_bootstrap_fetches_every_symbol_interval_pair():
     assert events[0].close_time_ms == 1999
 
 
-def test_build_streams_covers_kline_aggtrade_mark_book():
+def test_build_streams_covers_klines_and_mark_price_only():
+    # aggTrade/bookTicker flooded the persistence queue on the real market
+    # (candles fell an hour behind) and nothing reads those tables.
     collector = MarketCollector(_settings(), on_event=lambda e: None, rest_client=FakeRestClient())
     streams = collector.build_streams()
     assert "btcusdt@kline_1m" in streams
-    assert "btcusdt@aggTrade" in streams
     assert "btcusdt@markPrice@1s" in streams
-    assert "btcusdt@bookTicker" in streams
+    assert "btcusdt@aggTrade" not in streams
+    assert "btcusdt@bookTicker" not in streams
 
 
 def _kline_payload(event_time_ms: int) -> dict:
